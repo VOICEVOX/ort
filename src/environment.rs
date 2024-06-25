@@ -123,11 +123,17 @@ impl EnvironmentBuilder {
 
 	/// Commit the environment configuration and set the global environment.
 	pub fn commit(self) -> Result<()> {
+		if cfg!(feature = "__init-for-voicevox") {
+			panic!("`__init-for-voicevox`により禁止されています");
+		}
 		// drop global reference to previous environment
 		if let Some(env_arc) = unsafe { (*G_ENV.cell.get()).take() } {
 			drop(env_arc);
 		}
+		self.commit_()
+	}
 
+	pub(crate) fn commit_(self) -> Result<()> {
 		let (env_ptr, has_global_threadpool) = if let Some(global_thread_pool) = self.global_thread_pool_options {
 			let mut env_ptr: *mut ort_sys::OrtEnv = std::ptr::null_mut();
 			let logging_function: ort_sys::OrtLoggingFunction = Some(custom_logger);

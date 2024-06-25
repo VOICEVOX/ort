@@ -392,6 +392,10 @@ fn prepare_libort_dir() -> (PathBuf, bool) {
 				copy_libraries(&lib_dir.join("lib"), &out_dir);
 			}
 
+			let our_version = include_str!("./VERSION_NUMBER");
+			let their_version = fs::read_to_string(lib_dir.join("VERSION_NUMBER")).unwrap_or_else(|e| panic!("`VERSION_NUMBER`を読めませんでした: {e}"));
+			assert_eq!(our_version.trim_end(), their_version.trim_end(), "`VERSION_NUMBER`が異なります");
+
 			(lib_dir, true)
 		}
 		#[cfg(not(feature = "download-binaries"))]
@@ -421,6 +425,15 @@ fn real_main(link: bool) {
 }
 
 fn main() {
+	if cfg!(feature = "download-binaries") {
+		let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+		fs::write(
+			out_dir.join("downloaded_version.rs"),
+			format!("#[macro_export] macro_rules! downloaded_version(() => ({:?}));", include_str!("./VERSION_NUMBER").trim_end())
+		)
+		.unwrap();
+	}
+
 	if env::var("DOCS_RS").is_ok() {
 		return;
 	}
