@@ -246,19 +246,17 @@ pub fn try_init_from(filename: &std::ffi::OsStr, tp_options: Option<EnvironmentG
 
 			let lib_minor_version = version_string.split('.').nth(1).map_or(0, |x| x.parse::<u32>().unwrap_or(0));
 			match lib_minor_version.cmp(&MINOR_VERSION) {
-				// TODO: libvoicevox_onnxruntimeを使うようになったらこのメッセージは不要
-				std::cmp::Ordering::Less if filename == "onnxruntime.dll" => {
-					bail!(r"バージョン{version_string}のonnxruntime.dllが解決されました。Windows\System32下にある古いonnxruntime.dllかもしれません");
+				std::cmp::Ordering::Less if cfg!(windows) => {
+					bail!(r"`{dylib:?}`はバージョン{version_string}のONNX Runtimeです。ONNX Runtimeはバージョン1.{MINOR_VERSION}でなくてはなりません");
 				}
 				std::cmp::Ordering::Less => bail!(
-					"ort 2.0 is not compatible with the ONNX Runtime binary found at `{}`; expected GetVersionString to return '1.{MINOR_VERSION}.x', but got \
-					 '{version_string}'",
-					filename.to_string_lossy(),
+					"`{filename}`で指定されたONNX Runtimeはバージョン{version_string}です。ONNX Runtimeはバージョン1.{MINOR_VERSION}でなくてはなりません",
+					filename = filename.to_string_lossy(),
 				),
 				std::cmp::Ordering::Greater => tracing::warn!(
-					"ort 2.0 may have compatibility issues with the ONNX Runtime binary found at `{}`; expected GetVersionString to return \
-					'1.{MINOR_VERSION}.x', but got '{version_string}'",
-					filename.to_string_lossy(),
+					"`{filename}`で指定されたONNX Runtimeはバージョン{version_string}です。対応しているONNX Runtimeのバージョンは1.{MINOR_VERSION}なので、\
+					 互換性の問題があるかもしれません",
+					filename = filename.to_string_lossy(),
 				),
 				std::cmp::Ordering::Equal => {}
 			};
