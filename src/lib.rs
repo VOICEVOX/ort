@@ -183,7 +183,9 @@ pub(crate) fn lib_handle() -> &'static libloading::Library {
 static G_ENV_FOR_VOICEVOX: once_cell::sync::OnceCell<EnvHandle> = once_cell::sync::OnceCell::new();
 
 #[cfg(feature = "__init-for-voicevox")]
-static G_ORT_API_FOR_ENV_BUILD: std::sync::Mutex<Option<AssertSendSync<NonNull<ort_sys::OrtApi>>>> = std::sync::Mutex::new(None);
+thread_local! {
+	static G_ORT_API_FOR_ENV_BUILD: std::cell::Cell<Option<AssertSendSync<NonNull<ort_sys::OrtApi>>>> = const { std::cell::Cell::new(None) };
+}
 
 #[cfg(feature = "__init-for-voicevox")]
 #[cfg_attr(docsrs, doc(cfg(feature = "__init-for-voicevox")))]
@@ -304,7 +306,7 @@ fn create_env(
 	api: AssertSendSync<NonNull<ort_sys::OrtApi>>,
 	tp_options: Option<EnvironmentGlobalThreadPoolOptions>
 ) -> anyhow::Result<std::sync::Arc<Environment>> {
-	*G_ORT_API_FOR_ENV_BUILD.lock().unwrap_or_else(|e| panic!("{e}")) = Some(api);
+	G_ORT_API_FOR_ENV_BUILD.set(Some(api));
 	let _unset_api = UnsetOrtApi;
 
 	let mut env = EnvironmentBuilder::default().with_name(env!("CARGO_PKG_NAME"));
@@ -319,9 +321,7 @@ fn create_env(
 
 	impl Drop for UnsetOrtApi {
 		fn drop(&mut self) {
-			if let Ok(mut api) = G_ORT_API_FOR_ENV_BUILD.lock() {
-				*api = None;
-			}
+			G_ORT_API_FOR_ENV_BUILD.set(None);
 		}
 	}
 }
@@ -340,13 +340,7 @@ pub fn api() -> NonNull<ort_sys::OrtApi> {
 		return G_ENV_FOR_VOICEVOX
 			.get()
 			.map(|&EnvHandle { api: AssertSendSync(api), .. }| api)
-			.or_else(|| {
-				G_ORT_API_FOR_ENV_BUILD
-					.lock()
-					.unwrap_or_else(|e| panic!("{e}"))
-					.as_ref()
-					.map(|&AssertSendSync(api)| api)
-			})
+			.or_else(|| G_ORT_API_FOR_ENV_BUILD.get().map(|AssertSendSync(api)| api))
 			.expect("`try_init_from`または`try_init`で初期化されていなくてはなりません");
 	}
 	unsafe {
