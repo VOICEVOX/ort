@@ -75,36 +75,24 @@ pub use self::value::{
 	ValueRefMut, ValueType, ValueTypeMarker
 };
 
-/// このクレートの`load-dynamic`が有効化されていなければコンパイルエラー。
+/// このクレートのフィーチャが指定された状態になっていなければコンパイルエラー。
 #[cfg(feature = "load-dynamic")]
 #[macro_export]
-macro_rules! assert_load_dynamic_is_enabled {
-	($_:literal $(,)?) => {};
-}
-
-/// このクレートの`load-dynamic`が有効化されていなければコンパイルエラー。
-#[cfg(not(feature = "load-dynamic"))]
-#[macro_export]
-macro_rules! assert_load_dynamic_is_enabled {
-	($msg:literal $(,)?) => {
+macro_rules! assert_feature {
+	(cfg(feature = "load-dynamic"), $msg:literal $(,)?) => {};
+	(cfg(not(feature = "load-dynamic")), $msg:literal $(,)?) => {
 		::std::compile_error!($msg);
 	};
 }
 
-/// このクレートの`load-dynamic`が無効化されていなければコンパイルエラー。
-#[cfg(feature = "load-dynamic")]
-#[macro_export]
-macro_rules! assert_load_dynamic_is_disabled {
-	($msg:literal $(,)?) => {
-		::std::compile_error!($msg);
-	};
-}
-
-/// このクレートの`load-dynamic`が無効化されていなければコンパイルエラー。
+/// このクレートのフィーチャが指定された状態になっていなければコンパイルエラー。
 #[cfg(not(feature = "load-dynamic"))]
 #[macro_export]
-macro_rules! assert_load_dynamic_is_disabled {
-	($_:literal $(,)?) => {};
+macro_rules! assert_feature {
+	(cfg(feature = "load-dynamic"), $msg:literal $(,)?) => {
+		::std::compile_error!($msg);
+	};
+	(cfg(not(feature = "load-dynamic")), $msg:literal $(,)?) => {};
 }
 
 #[cfg(not(all(target_arch = "x86", target_os = "windows")))]
@@ -184,7 +172,7 @@ static G_ENV_FOR_VOICEVOX: once_cell::sync::OnceCell<EnvHandle> = once_cell::syn
 
 #[cfg(feature = "__init-for-voicevox")]
 thread_local! {
-	static G_ORT_API_FOR_ENV_BUILD: std::cell::Cell<Option<AssertSendSync<NonNull<ort_sys::OrtApi>>>> = const { std::cell::Cell::new(None) };
+	static G_ORT_API_FOR_ENV_BUILD: std::cell::Cell<Option<NonNull<ort_sys::OrtApi>>> = const { std::cell::Cell::new(None) };
 }
 
 #[cfg(feature = "__init-for-voicevox")]
@@ -269,7 +257,7 @@ pub fn try_init_from(filename: &std::ffi::OsStr, tp_options: Option<EnvironmentG
 		};
 		let api = AssertSendSync(NonNull::new(api.cast_mut()).unwrap_or_else(|| panic!("`GetApi({ORT_API_VERSION})`が失敗しました")));
 
-		let _env = create_env(api, tp_options)?;
+		let _env = create_env(api.0, tp_options)?;
 
 		Ok(EnvHandle { _env, api, dylib })
 	})
@@ -295,17 +283,14 @@ pub fn try_init(tp_options: Option<EnvironmentGlobalThreadPoolOptions>) -> anyho
 			.unwrap_or_else(|| panic!("`GetApi({ORT_API_VERSION})`が失敗しました。おそらく1.{MINOR_VERSION}より古いものがリンクされています"));
 		let api = AssertSendSync(api);
 
-		let _env = create_env(api, tp_options)?;
+		let _env = create_env(api.0, tp_options)?;
 
 		Ok(EnvHandle { _env, api })
 	})
 }
 
 #[cfg(feature = "__init-for-voicevox")]
-fn create_env(
-	api: AssertSendSync<NonNull<ort_sys::OrtApi>>,
-	tp_options: Option<EnvironmentGlobalThreadPoolOptions>
-) -> anyhow::Result<std::sync::Arc<Environment>> {
+fn create_env(api: NonNull<ort_sys::OrtApi>, tp_options: Option<EnvironmentGlobalThreadPoolOptions>) -> anyhow::Result<std::sync::Arc<Environment>> {
 	G_ORT_API_FOR_ENV_BUILD.set(Some(api));
 	let _unset_api = UnsetOrtApi;
 
@@ -340,7 +325,7 @@ pub fn api() -> NonNull<ort_sys::OrtApi> {
 		return G_ENV_FOR_VOICEVOX
 			.get()
 			.map(|&EnvHandle { api: AssertSendSync(api), .. }| api)
-			.or_else(|| G_ORT_API_FOR_ENV_BUILD.get().map(|AssertSendSync(api)| api))
+			.or_else(|| G_ORT_API_FOR_ENV_BUILD.get())
 			.expect("`try_init_from`または`try_init`で初期化されていなくてはなりません");
 	}
 	unsafe {
