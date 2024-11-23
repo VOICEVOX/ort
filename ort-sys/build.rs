@@ -1,7 +1,15 @@
 use std::{
+<<<<<<< HEAD
 	env, fs,
 	path::{Path, PathBuf},
 	process::Command
+||||||| parent of eb51646 (fix: concurrent downloads, ref #322)
+	env, fs,
+	path::{Path, PathBuf}
+=======
+	env, fs, io,
+	path::{Path, PathBuf}
+>>>>>>> eb51646 (fix: concurrent downloads, ref #322)
 };
 
 #[allow(unused)]
@@ -12,9 +20,9 @@ const ORT_ENV_SYSTEM_LIB_PROFILE: &str = "ORT_LIB_PROFILE";
 
 const DIST_TABLE: &str = include_str!("dist.txt");
 
-#[path = "src/internal/dirs.rs"]
-mod dirs;
-use self::dirs::cache_dir;
+#[path = "src/internal/mod.rs"]
+mod internal;
+use self::internal::dirs::cache_dir;
 
 #[cfg(feature = "download-binaries")]
 fn fetch_file(source_url: &str) -> Vec<u8> {
@@ -416,21 +424,45 @@ fn prepare_libort_dir() -> (PathBuf, bool) {
 
 			let (prebuilt_url, prebuilt_hash) = dist.unwrap();
 
-			let mut cache_dir = cache_dir()
+			let bin_extract_dir = cache_dir()
 				.expect("could not determine cache directory")
 				.join("dfbin")
 				.join(target)
 				.join(prebuilt_hash);
-			if fs::create_dir_all(&cache_dir).is_err() {
-				cache_dir = env::var("OUT_DIR").unwrap().into();
-			}
 
+<<<<<<< HEAD
 			let ort_extract_dir = prebuilt_url.split('/').last().unwrap().strip_suffix(".tgz").unwrap();
 			let lib_dir = cache_dir.join(ort_extract_dir);
+||||||| parent of eb51646 (fix: concurrent downloads, ref #322)
+			let lib_dir = cache_dir.join(ORT_EXTRACT_DIR);
+=======
+			let lib_dir = bin_extract_dir.join(ORT_EXTRACT_DIR);
+>>>>>>> eb51646 (fix: concurrent downloads, ref #322)
 			if !lib_dir.exists() {
 				let downloaded_file = fetch_file(prebuilt_url);
 				assert!(verify_file(&downloaded_file, prebuilt_hash), "hash of downloaded ONNX Runtime binary does not match!");
-				extract_tgz(&downloaded_file, &cache_dir);
+
+				let mut temp_extract_dir = bin_extract_dir
+					.parent()
+					.unwrap()
+					.join(format!("tmp.{}_{prebuilt_hash}", self::internal::random_identifier()));
+				let mut should_rename = true;
+				if fs::create_dir_all(&temp_extract_dir).is_err() {
+					temp_extract_dir = env::var("OUT_DIR").unwrap().into();
+					should_rename = false;
+				}
+				extract_tgz(&downloaded_file, &temp_extract_dir);
+				if should_rename {
+					match std::fs::rename(&temp_extract_dir, bin_extract_dir) {
+						Ok(()) => {}
+						Err(e) => match e.kind() {
+							io::ErrorKind::AlreadyExists | io::ErrorKind::DirectoryNotEmpty => {
+								let _ = fs::remove_dir_all(temp_extract_dir);
+							}
+							_ => panic!("failed to extract downloaded binaries: {e}")
+						}
+					}
+				}
 			}
 
 			static_link_prerequisites(true);
