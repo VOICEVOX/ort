@@ -10,6 +10,9 @@
 #[doc(hidden)]
 pub mod internal;
 
+#[cfg(feature = "download-binaries")]
+include!(concat!(env!("OUT_DIR"), "/downloaded_version.rs"));
+
 pub const ORT_API_VERSION: u32 = 17;
 
 pub use std::ffi::{c_char, c_int, c_ulong, c_ulonglong, c_ushort, c_void};

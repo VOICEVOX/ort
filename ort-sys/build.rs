@@ -1,15 +1,7 @@
 use std::{
-<<<<<<< HEAD
-	env, fs,
+	env, fs, io,
 	path::{Path, PathBuf},
 	process::Command
-||||||| parent of eb51646 (fix: concurrent downloads, ref #322)
-	env, fs,
-	path::{Path, PathBuf}
-=======
-	env, fs, io,
-	path::{Path, PathBuf}
->>>>>>> eb51646 (fix: concurrent downloads, ref #322)
 };
 
 #[allow(unused)]
@@ -430,14 +422,8 @@ fn prepare_libort_dir() -> (PathBuf, bool) {
 				.join(target)
 				.join(prebuilt_hash);
 
-<<<<<<< HEAD
 			let ort_extract_dir = prebuilt_url.split('/').last().unwrap().strip_suffix(".tgz").unwrap();
-			let lib_dir = cache_dir.join(ort_extract_dir);
-||||||| parent of eb51646 (fix: concurrent downloads, ref #322)
-			let lib_dir = cache_dir.join(ORT_EXTRACT_DIR);
-=======
-			let lib_dir = bin_extract_dir.join(ORT_EXTRACT_DIR);
->>>>>>> eb51646 (fix: concurrent downloads, ref #322)
+			let lib_dir = bin_extract_dir.join(ort_extract_dir);
 			if !lib_dir.exists() {
 				let downloaded_file = fetch_file(prebuilt_url);
 				assert!(verify_file(&downloaded_file, prebuilt_hash), "hash of downloaded ONNX Runtime binary does not match!");
