@@ -47,7 +47,7 @@ jobs:
       - name: Check fmt
         run: cargo fmt --all -- --check
       - name: Run clippy
-        run: cargo clippy -p voicevox-ort --all-targets --features fetch-models
+        run: cargo clippy -p voicevox-ort --all-targets --workspace --features fetch-models
   coverage:
     name: Code coverage
     runs-on: ubuntu-latest
