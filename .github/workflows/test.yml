@@ -1,9 +1,7 @@
-name: Run cargo tests
+name: 🧪 Cargo Tests
 on:
   workflow_dispatch:
   push:
-    branches:
-      - 'main'
     paths:
       - '.github/workflows/test.yml'
       - 'src/**/*.rs'
@@ -38,38 +36,26 @@ jobs:
       matrix:
         platform:
           - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
           - os: windows-latest
-          - os: macos-12
-          - os: macos-14
+          - os: macos-13
+          - os: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Install stable Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2.7.8
       - name: Run tests
         shell: bash
         run: |
           # ONNX Runtimeの静的リンクをやめているため、Windowsではdoctestを無効化する
           [ "$RUNNER_OS" = Windows ] && targets=--tests || targets=
           cargo test -p voicevox-ort --verbose --features fetch-models "$targets" -- --test-threads 1
-          # Test examples that use in-tree graphs (do NOT run any of the examples that download ~700 MB graphs from pyke parcel...)
-          cargo run --example custom-ops
-  test-wasm:
-    name: Test WebAssembly
-    runs-on: ubuntu-latest
-    if: false # WASM版はまだ提供しないため、テストもしない
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install nightly Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
-      - name: Install wasm-pack
-        run: cargo install wasm-pack
-      - name: Run tests
-        working-directory: examples/webassembly
-        run: |
-          wasm-pack test --node
+        env:
+          RUSTFLAGS: ${{ startsWith(matrix.platform.os, 'macos') && '-Clink-arg=-fapple-link-rtlib' || '' }}
+          RUSTDOCFLAGS: ${{ startsWith(matrix.platform.os, 'macos') && '-Clink-arg=-fapple-link-rtlib' || '' }}
   # Disable cross-compile until cross updates aarch64-unknown-linux-gnu to Ubuntu 22.04
   # ref https://github.com/cross-rs/cross/pull/973
   #cross-compile:

@@ -5,9 +5,11 @@ version = "0.0.0"
 edition = "2021"
 
 [dependencies]
-voicevox-ort = { path = "../../", features = [ "fetch-models" ] }
-ndarray = "0.15"
+voicevox-ort = { path = "../../" }
 
 [features]
 load-dynamic = [ "voicevox-ort/load-dynamic" ]
-cuda = [ "voicevox-ort/cuda" ]
+
+[[example]]
+name = "custom-ops"
+path = "custom-ops.rs"

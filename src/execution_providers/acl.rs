@@ -1,41 +1,36 @@
-use crate::{
-	error::{Error, Result},
-	execution_providers::{ExecutionProvider, ExecutionProviderDispatch},
-	session::SessionBuilder
-};
+use super::{ExecutionProvider, RegisterError};
+use crate::{error::Result, session::builder::SessionBuilder};
 
-#[cfg(all(not(feature = "load-dynamic"), feature = "acl"))]
-extern "C" {
-	fn OrtSessionOptionsAppendExecutionProvider_ACL(options: *mut ort_sys::OrtSessionOptions, use_arena: std::os::raw::c_int) -> ort_sys::OrtStatusPtr;
-}
-
+/// [Arm Compute Library execution provider](https://onnxruntime.ai/docs/execution-providers/community-maintained/ACL-ExecutionProvider.html)
+/// for ARM platforms.
 #[derive(Debug, Default, Clone)]
 pub struct ACLExecutionProvider {
-	use_arena: bool
+	fast_math: bool
 }
+
+super::impl_ep!(ACLExecutionProvider);
 
 impl ACLExecutionProvider {
+	/// Enable/disable ACL's fast math mode. Enabling can improve performance at the cost of some accuracy for
+	/// `MatMul`/`Conv` nodes.
+	///
+	/// ```
+	/// # use ort::{execution_providers::acl::ACLExecutionProvider, session::Session};
+	/// # fn main() -> ort::Result<()> {
+	/// let ep = ACLExecutionProvider::default().with_fast_math(true).build();
+	/// # Ok(())
+	/// # }
+	/// ```
 	#[must_use]
-	pub fn with_arena_allocator(mut self) -> Self {
-		self.use_arena = true;
+	pub fn with_fast_math(mut self, enable: bool) -> Self {
+		self.fast_math = enable;
 		self
-	}
-
-	#[must_use]
-	pub fn build(self) -> ExecutionProviderDispatch {
-		self.into()
-	}
-}
-
-impl From<ACLExecutionProvider> for ExecutionProviderDispatch {
-	fn from(value: ACLExecutionProvider) -> Self {
-		ExecutionProviderDispatch::new(value)
 	}
 }
 
 impl ExecutionProvider for ACLExecutionProvider {
-	fn as_str(&self) -> &'static str {
-		"AclExecutionProvider"
+	fn name(&self) -> &'static str {
+		"ACLExecutionProvider"
 	}
 
 	fn supported_by_platform(&self) -> bool {
@@ -43,16 +38,17 @@ impl ExecutionProvider for ACLExecutionProvider {
 	}
 
 	#[allow(unused, unreachable_code)]
-	fn register(&self, session_builder: &SessionBuilder) -> Result<()> {
+	fn register(&self, session_builder: &mut SessionBuilder) -> Result<(), RegisterError> {
 		#[cfg(any(feature = "load-dynamic", feature = "acl"))]
 		{
-			super::get_ep_register!(OrtSessionOptionsAppendExecutionProvider_ACL(options: *mut ort_sys::OrtSessionOptions, use_arena: std::os::raw::c_int) -> ort_sys::OrtStatusPtr);
-			return crate::error::status_to_result(unsafe {
-				OrtSessionOptionsAppendExecutionProvider_ACL(session_builder.session_options_ptr.as_ptr(), self.use_arena.into())
-			})
-			.map_err(Error::ExecutionProvider);
+			use crate::AsPointer;
+
+			super::define_ep_register!(OrtSessionOptionsAppendExecutionProvider_ACL(options: *mut ort_sys::OrtSessionOptions, enable_fast_math: core::ffi::c_int) -> ort_sys::OrtStatusPtr);
+			return Ok(unsafe {
+				crate::error::status_to_result(OrtSessionOptionsAppendExecutionProvider_ACL(session_builder.ptr_mut(), self.fast_math.into()))
+			}?);
 		}
 
-		Err(Error::ExecutionProviderNotRegistered(self.as_str()))
+		Err(RegisterError::MissingFeature)
 	}
 }

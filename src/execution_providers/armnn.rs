@@ -1,40 +1,34 @@
-use crate::{
-	error::{Error, Result},
-	execution_providers::{ExecutionProvider, ExecutionProviderDispatch},
-	session::SessionBuilder
-};
+use super::{ExecutionProvider, RegisterError};
+use crate::{error::Result, session::builder::SessionBuilder};
 
-#[cfg(all(not(feature = "load-dynamic"), feature = "armnn"))]
-extern "C" {
-	fn OrtSessionOptionsAppendExecutionProvider_ArmNN(options: *mut ort_sys::OrtSessionOptions, use_arena: std::os::raw::c_int) -> ort_sys::OrtStatusPtr;
-}
-
+/// [Arm NN execution provider](https://onnxruntime.ai/docs/execution-providers/community-maintained/ArmNN-ExecutionProvider.html)
+/// for ARM platforms.
 #[derive(Debug, Default, Clone)]
 pub struct ArmNNExecutionProvider {
 	use_arena: bool
 }
 
+super::impl_ep!(ArmNNExecutionProvider);
+
 impl ArmNNExecutionProvider {
+	/// Enable/disable the usage of the arena allocator.
+	///
+	/// ```
+	/// # use ort::{execution_providers::armnn::ArmNNExecutionProvider, session::Session};
+	/// # fn main() -> ort::Result<()> {
+	/// let ep = ArmNNExecutionProvider::default().with_arena_allocator(true).build();
+	/// # Ok(())
+	/// # }
+	/// ```
 	#[must_use]
-	pub fn with_arena_allocator(mut self) -> Self {
-		self.use_arena = true;
+	pub fn with_arena_allocator(mut self, enable: bool) -> Self {
+		self.use_arena = enable;
 		self
-	}
-
-	#[must_use]
-	pub fn build(self) -> ExecutionProviderDispatch {
-		self.into()
-	}
-}
-
-impl From<ArmNNExecutionProvider> for ExecutionProviderDispatch {
-	fn from(value: ArmNNExecutionProvider) -> Self {
-		ExecutionProviderDispatch::new(value)
 	}
 }
 
 impl ExecutionProvider for ArmNNExecutionProvider {
-	fn as_str(&self) -> &'static str {
+	fn name(&self) -> &'static str {
 		"ArmNNExecutionProvider"
 	}
 
@@ -43,16 +37,17 @@ impl ExecutionProvider for ArmNNExecutionProvider {
 	}
 
 	#[allow(unused, unreachable_code)]
-	fn register(&self, session_builder: &SessionBuilder) -> Result<()> {
+	fn register(&self, session_builder: &mut SessionBuilder) -> Result<(), RegisterError> {
 		#[cfg(any(feature = "load-dynamic", feature = "armnn"))]
 		{
-			super::get_ep_register!(OrtSessionOptionsAppendExecutionProvider_ArmNN(options: *mut ort_sys::OrtSessionOptions, use_arena: std::os::raw::c_int) -> ort_sys::OrtStatusPtr);
-			return crate::error::status_to_result(unsafe {
-				OrtSessionOptionsAppendExecutionProvider_ArmNN(session_builder.session_options_ptr.as_ptr(), self.use_arena.into())
-			})
-			.map_err(Error::ExecutionProvider);
+			use crate::AsPointer;
+
+			super::define_ep_register!(OrtSessionOptionsAppendExecutionProvider_ArmNN(options: *mut ort_sys::OrtSessionOptions, use_arena: core::ffi::c_int) -> ort_sys::OrtStatusPtr);
+			return Ok(unsafe {
+				crate::error::status_to_result(OrtSessionOptionsAppendExecutionProvider_ArmNN(session_builder.ptr_mut(), self.use_arena.into()))
+			}?);
 		}
 
-		Err(Error::ExecutionProviderNotRegistered(self.as_str()))
+		Err(RegisterError::MissingFeature)
 	}
 }

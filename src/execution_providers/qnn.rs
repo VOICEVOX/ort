@@ -1,11 +1,10 @@
-use crate::{
-	error::{Error, Result},
-	execution_providers::{ExecutionProvider, ExecutionProviderDispatch},
-	session::SessionBuilder
-};
+use alloc::string::ToString;
 
-#[derive(Debug, Clone)]
-pub enum QNNExecutionProviderPerformanceMode {
+use super::{ExecutionProvider, ExecutionProviderOptions, RegisterError};
+use crate::{error::Result, session::builder::SessionBuilder};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QNNPerformanceMode {
 	Default,
 	Burst,
 	Balanced,
@@ -14,111 +13,169 @@ pub enum QNNExecutionProviderPerformanceMode {
 	LowPowerSaver,
 	LowBalanced,
 	PowerSaver,
+	ExtremePowerSaver,
 	SustainedHighPerformance
 }
 
-impl QNNExecutionProviderPerformanceMode {
+impl QNNPerformanceMode {
 	#[must_use]
 	pub fn as_str(&self) -> &'static str {
 		match self {
-			QNNExecutionProviderPerformanceMode::Default => "default",
-			QNNExecutionProviderPerformanceMode::Burst => "burst",
-			QNNExecutionProviderPerformanceMode::Balanced => "balanced",
-			QNNExecutionProviderPerformanceMode::HighPerformance => "high_performance",
-			QNNExecutionProviderPerformanceMode::HighPowerSaver => "high_power_saver",
-			QNNExecutionProviderPerformanceMode::LowPowerSaver => "low_power_saver",
-			QNNExecutionProviderPerformanceMode::LowBalanced => "low_balanced",
-			QNNExecutionProviderPerformanceMode::PowerSaver => "power_saver",
-			QNNExecutionProviderPerformanceMode::SustainedHighPerformance => "sustained_high_performance"
+			QNNPerformanceMode::Default => "default",
+			QNNPerformanceMode::Burst => "burst",
+			QNNPerformanceMode::Balanced => "balanced",
+			QNNPerformanceMode::HighPerformance => "high_performance",
+			QNNPerformanceMode::HighPowerSaver => "high_power_saver",
+			QNNPerformanceMode::LowPowerSaver => "low_power_saver",
+			QNNPerformanceMode::LowBalanced => "low_balanced",
+			QNNPerformanceMode::PowerSaver => "power_saver",
+			QNNPerformanceMode::ExtremePowerSaver => "extreme_power_saver",
+			QNNPerformanceMode::SustainedHighPerformance => "sustained_high_performance"
 		}
 	}
 }
 
-#[derive(Debug, Clone)]
-pub enum QNNExecutionProviderProfilingLevel {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QNNProfilingLevel {
 	Off,
 	Basic,
 	Detailed
 }
 
-impl QNNExecutionProviderProfilingLevel {
+impl QNNProfilingLevel {
 	pub fn as_str(&self) -> &'static str {
 		match self {
-			QNNExecutionProviderProfilingLevel::Off => "off",
-			QNNExecutionProviderProfilingLevel::Basic => "basic",
-			QNNExecutionProviderProfilingLevel::Detailed => "detailed"
+			QNNProfilingLevel::Off => "off",
+			QNNProfilingLevel::Basic => "basic",
+			QNNProfilingLevel::Detailed => "detailed"
+		}
+	}
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum QNNContextPriority {
+	Low,
+	#[default]
+	Normal,
+	NormalHigh,
+	High
+}
+
+impl QNNContextPriority {
+	pub fn as_str(&self) -> &'static str {
+		match self {
+			QNNContextPriority::Low => "low",
+			QNNContextPriority::Normal => "normal",
+			QNNContextPriority::NormalHigh => "normal_high",
+			QNNContextPriority::High => "high"
 		}
 	}
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct QNNExecutionProvider {
-	backend_path: Option<String>,
-	qnn_context_cache_enable: Option<bool>,
-	qnn_context_cache_path: Option<String>,
-	profiling_level: Option<QNNExecutionProviderProfilingLevel>,
-	rpc_control_latency: Option<u32>,
-	htp_performance_mode: Option<QNNExecutionProviderPerformanceMode>
+	options: ExecutionProviderOptions
 }
+
+super::impl_ep!(arbitrary; QNNExecutionProvider);
 
 impl QNNExecutionProvider {
 	/// The file path to QNN backend library. On Linux/Android, this is `libQnnCpu.so` to use the CPU backend,
 	/// or `libQnnHtp.so` to use the accelerated backend.
 	#[must_use]
 	pub fn with_backend_path(mut self, path: impl ToString) -> Self {
-		self.backend_path = Some(path.to_string());
-		self
-	}
-
-	/// Configure whether to enable QNN graph creation from a cached QNN context file. If enabled, the QNN EP
-	/// will load from the cached QNN context binary if it exists, or create one if it does not exist.
-	#[must_use]
-	pub fn with_enable_context_cache(mut self, enable: bool) -> Self {
-		self.qnn_context_cache_enable = Some(enable);
-		self
-	}
-
-	/// Explicitly provide the QNN context cache file (see [`QNNExecutionProvider::with_enable_context_cache`]).
-	/// Defaults to `model_file.onnx.bin` if not provided.
-	#[must_use]
-	pub fn with_context_cache_path(mut self, path: impl ToString) -> Self {
-		self.qnn_context_cache_path = Some(path.to_string());
+		self.options.set("backend_path", path.to_string());
 		self
 	}
 
 	#[must_use]
-	pub fn with_profiling(mut self, level: QNNExecutionProviderProfilingLevel) -> Self {
-		self.profiling_level = Some(level);
+	pub fn with_profiling(mut self, level: QNNProfilingLevel) -> Self {
+		self.options.set("profiling_level", level.as_str());
+		self
+	}
+
+	#[must_use]
+	pub fn with_profiling_path(mut self, path: impl ToString) -> Self {
+		self.options.set("profiling_file_path", path.to_string());
 		self
 	}
 
 	/// Allows client to set up RPC control latency in microseconds.
 	#[must_use]
 	pub fn with_rpc_control_latency(mut self, latency: u32) -> Self {
-		self.rpc_control_latency = Some(latency);
+		self.options.set("rpc_control_latency", latency.to_string());
 		self
 	}
 
 	#[must_use]
-	pub fn with_performance_mode(mut self, mode: QNNExecutionProviderPerformanceMode) -> Self {
-		self.htp_performance_mode = Some(mode);
+	pub fn with_vtcm_mb(mut self, mb: usize) -> Self {
+		self.options.set("vtcm_mb", mb.to_string());
 		self
 	}
 
 	#[must_use]
-	pub fn build(self) -> ExecutionProviderDispatch {
-		self.into()
+	pub fn with_performance_mode(mut self, mode: QNNPerformanceMode) -> Self {
+		self.options.set("htp_performance_mode", mode.as_str());
+		self
 	}
-}
 
-impl From<QNNExecutionProvider> for ExecutionProviderDispatch {
-	fn from(value: QNNExecutionProvider) -> Self {
-		ExecutionProviderDispatch::new(value)
+	#[must_use]
+	pub fn with_saver_path(mut self, path: impl ToString) -> Self {
+		self.options.set("qnn_saver_path", path.to_string());
+		self
+	}
+
+	#[must_use]
+	pub fn with_context_priority(mut self, priority: QNNContextPriority) -> Self {
+		self.options.set("qnn_context_priority", priority.as_str());
+		self
+	}
+
+	#[must_use]
+	pub fn with_htp_graph_finalization_optimization_mode(mut self, mode: u8) -> Self {
+		self.options.set("htp_graph_finalization_optimization_mode", mode.to_string());
+		self
+	}
+
+	#[must_use]
+	pub fn with_soc_model(mut self, model: impl ToString) -> Self {
+		self.options.set("soc_model", model.to_string());
+		self
+	}
+
+	#[must_use]
+	pub fn with_htp_arch(mut self, arch: u32) -> Self {
+		self.options.set("htp_arch", arch.to_string());
+		self
+	}
+
+	#[must_use]
+	pub fn with_device_id(mut self, device: i32) -> Self {
+		self.options.set("device_id", device.to_string());
+		self
+	}
+
+	#[must_use]
+	pub fn with_htp_fp16_precision(mut self, enable: bool) -> Self {
+		self.options.set("enable_htp_fp16_precision", if enable { "1" } else { "0" });
+		self
+	}
+
+	#[must_use]
+	pub fn with_htp_weight_sharing(mut self, enable: bool) -> Self {
+		self.options.set("enable_htp_weight_sharing", if enable { "1" } else { "0" });
+		self
+	}
+
+	#[must_use]
+	pub fn with_offload_graph_io_quantization(mut self, enable: bool) -> Self {
+		self.options.set("offload_graph_io_quantization", if enable { "1" } else { "0" });
+		self
 	}
 }
 
 impl ExecutionProvider for QNNExecutionProvider {
-	fn as_str(&self) -> &'static str {
+	fn name(&self) -> &'static str {
 		"QNNExecutionProvider"
 	}
 
@@ -127,28 +184,22 @@ impl ExecutionProvider for QNNExecutionProvider {
 	}
 
 	#[allow(unused, unreachable_code)]
-	fn register(&self, session_builder: &SessionBuilder) -> Result<()> {
+	fn register(&self, session_builder: &mut SessionBuilder) -> Result<(), RegisterError> {
 		#[cfg(any(feature = "load-dynamic", feature = "qnn"))]
 		{
-			let (key_ptrs, value_ptrs, len, _keys, _values) = super::map_keys! {
-				backend_path = self.backend_path.clone(),
-				profiling_level = self.profiling_level.as_ref().map(QNNExecutionProviderProfilingLevel::as_str),
-				qnn_context_cache_enable = self.qnn_context_cache_enable.map(<bool as Into<i32>>::into),
-				qnn_context_cache_path = self.qnn_context_cache_path.clone(),
-				htp_performance_mode = self.htp_performance_mode.as_ref().map(QNNExecutionProviderPerformanceMode::as_str),
-				rpc_control_latency = self.rpc_control_latency
-			};
-			let ep_name = std::ffi::CString::new("QNN").unwrap_or_else(|_| unreachable!());
-			return crate::error::status_to_result(crate::ortsys![unsafe SessionOptionsAppendExecutionProvider(
-				session_builder.session_options_ptr.as_ptr(),
-				ep_name.as_ptr(),
-				key_ptrs.as_ptr(),
-				value_ptrs.as_ptr(),
-				len as _,
-			)])
-			.map_err(Error::ExecutionProvider);
+			use crate::{AsPointer, ortsys};
+
+			let ffi_options = self.options.to_ffi();
+			ortsys![unsafe SessionOptionsAppendExecutionProvider(
+				session_builder.ptr_mut(),
+				c"QNN".as_ptr().cast::<core::ffi::c_char>(),
+				ffi_options.key_ptrs(),
+				ffi_options.value_ptrs(),
+				ffi_options.len(),
+			)?];
+			return Ok(());
 		}
 
-		Err(Error::ExecutionProviderNotRegistered(self.as_str()))
+		Err(RegisterError::MissingFeature)
 	}
 }

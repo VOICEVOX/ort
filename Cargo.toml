@@ -1,43 +1,40 @@
 [workspace]
-members = [
-	'ort-sys',
+members = [ 'ort-sys' ]
+default-members = [ '.' ]
+exclude = [
+	'backends/candle',
+	'backends/tract',
 	'examples/async-gpt2-api',
+	'examples/cudarc',
 	'examples/custom-ops',
 	'examples/gpt2',
 	'examples/model-info',
-	'examples/yolov8',
 	'examples/modnet',
+	'examples/phi-3-vision',
+	'examples/sentence-transformers',
 	'examples/training',
-	'examples/webassembly'
-]
-default-members = [
-	'.',
-	'examples/async-gpt2-api',
-	'examples/custom-ops',
-	'examples/gpt2',
-	'examples/model-info',
+	'examples/wasm-emscripten',
 	'examples/yolov8',
-	'examples/modnet'
+	'tests/leak-check'
 ]
-exclude = [ 'examples/cudarc' ]
 
 [package]
 name = "voicevox-ort"
-description = "A safe Rust wrapper for ONNX Runtime 1.18 - Optimize and accelerate machine learning inference & training"
-version = "2.0.0-rc.4"
+description = "A safe Rust wrapper for ONNX Runtime 1.22 - Optimize and accelerate machine learning inference & training"
+version = "2.0.0-rc.10"
 edition = "2021"
-rust-version = "1.70"
+rust-version = "1.81"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/VOICEVOX/ort"
-documentation = "https://ort.pyke.io/"
+homepage = "https://ort.pyke.io/"
 readme = "README.md"
-keywords = [ "machine-learning", "ai", "ml" ]
-categories = [ "algorithms", "mathematics", "science", "science" ]
+keywords = [ "machine-learning", "ai", "ml", "onnxruntime" ]
+categories = [ "algorithms", "mathematics", "science" ]
 authors = [
 	"pyke.io <contact@pyke.io>",
 	"Nicolas Bigaouette <nbigaouette@gmail.com>"
 ]
-include = [ "src/", "benches/", "LICENSE-APACHE", "LICENSE-MIT", "README.md" ]
+include = [ "/src/", "/LICENSE-APACHE", "/LICENSE-MIT", "/README.md" ]
 
 [profile.release]
 opt-level = 3
@@ -46,24 +43,30 @@ strip = true
 codegen-units = 1
 
 [package.metadata.docs.rs]
-features = [ "ndarray", "half", "training", "operator-libraries", "fetch-models", "load-dynamic", "copy-dylibs", "__init-for-voicevox" ]
-targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
+features = [ "std", "ndarray", "half", "num-complex", "training", "fetch-models", "load-dynamic", "copy-dylibs", "__init-for-voicevox" ]
+targets = ["x86_64-unknown-linux-gnu"]
 rustdoc-args = [ "--cfg", "docsrs" ]
 
 [lib]
 name = "ort"
 
 [features]
-default = [ "ndarray", "half", "download-binaries", "copy-dylibs" ]
+default = [ "std", "ndarray", "tracing", "download-binaries", "copy-dylibs" ]
 
+std = [ "voicevox-ort-sys/std", "ndarray/std", "tracing?/std" ]
 training = [ "voicevox-ort-sys/training" ]
 
-operator-libraries = [ "libc", "winapi" ]
+ndarray = [ "dep:ndarray" ]
+half = [ "dep:half" ]
+num-complex = [ "dep:num-complex" ]
+tracing = [ "dep:tracing" ]
 
-fetch-models = [ "ureq" ]
+fetch-models = [ "std", "dep:ureq", "dep:sha2" ]
 download-binaries = [ "voicevox-ort-sys/download-binaries" ]
-load-dynamic = [ "libloading", "voicevox-ort-sys/load-dynamic" ]
+load-dynamic = [ "std", "libloading", "voicevox-ort-sys/load-dynamic" ]
 copy-dylibs = [ "voicevox-ort-sys/copy-dylibs" ]
+
+alternative-backend = [ "voicevox-ort-sys/disable-linking" ]
 
 cuda = [ "voicevox-ort-sys/cuda" ]
 tensorrt = [ "voicevox-ort-sys/tensorrt" ]
@@ -82,6 +85,9 @@ rknpu = [ "voicevox-ort-sys/rknpu" ]
 vitis = [ "voicevox-ort-sys/vitis" ]
 cann = [ "voicevox-ort-sys/cann" ]
 qnn = [ "voicevox-ort-sys/qnn" ]
+webgpu = [ "voicevox-ort-sys/webgpu" ]
+azure = [ "voicevox-ort-sys/azure" ]
+nv = [ "voicevox-ort-sys/nv" ]
 
 # 動的ライブラリの読み込みから`OrtEnv`の作成までを、VOICEVOX独自の方法で行えるようにする。
 #
@@ -90,36 +96,20 @@ __init-for-voicevox = []
 
 [dependencies]
 anyhow = "1.0"
-ndarray = { version = "0.15", optional = true }
-thiserror = "1.0"
 once_cell = "1.19.0"
-voicevox-ort-sys = { version = "2.0.0-rc.4", path = "ort-sys" }
+voicevox-ort-sys = { version = "=2.0.0-rc.10", path = "ort-sys", default-features = false }
+smallvec = { version = "=2.0.0-alpha.10", default-features = false }
+
+ndarray = { version = "0.16", default-features = false, optional = true }
 libloading = { version = "0.8", optional = true }
-
-ureq = { version = "2.1", optional = true, default-features = false, features = [ "tls" ] }
-tracing = "0.1"
-half = { version = "2.1", optional = true }
-
-[target.'cfg(unix)'.dependencies]
-libc = { version = "0.2", optional = true }
-
-[target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", optional = true, features = [ "std", "libloaderapi" ] }
-
-[target.'cfg(target_family = "wasm")'.dependencies]
-js-sys = "0.3"
-web-sys = "0.3"
+ureq = { version = "3", optional = true, default-features = false, features = [ "rustls" ] }
+sha2 = { version = "0.10", optional = true }
+tracing = { version = "0.1", optional = true, default-features = false }
+half = { version = "2.1", default-features = false, optional = true }
+num-complex = { version = "0.4", default-features = false, optional = true }
 
 [dev-dependencies]
-ureq = "2.1"
+ureq = { version = "3", default-features = false, features = [ "native-tls" ] }
 image = "0.25"
-test-log = { version = "0.2", default-features = false, features = [ "trace" ] }
 tracing-subscriber = { version = "0.3", default-features = false, features = [ "env-filter", "fmt" ] }
-glassbench = "0.4"
 tokio = { version = "1.36", features = [ "test-util" ] }
-tokio-test = "0.4.3"
-wasm-bindgen-test = "0.3"
-
-[[bench]]
-name = "squeezenet"
-harness = false

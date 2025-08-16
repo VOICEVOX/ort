@@ -5,15 +5,43 @@ version = "0.0.0"
 edition = "2021"
 
 [dependencies]
-voicevox-ort = { path = "../../" }
-ndarray = "0.15"
+voicevox-ort = { path = "../../", features = [ "fetch-models" ] }
+ndarray = "0.16"
 tracing-subscriber = { version = "0.3", default-features = false, features = [ "env-filter", "fmt" ] }
-image = "0.24"
-show-image = { version = "0.13", features = [ "image", "raqote" ] }
+image = "0.25"
+show-image = { version = "=0.14.0", features = [ "image", "raqote" ] }
 raqote = { version = "0.8", default-features = false }
-ureq = "2.1"
 tracing = "0.1"
+
+ort-candle = { path = "../../backends/candle", optional = true }
+ort-tract = { path = "../../backends/tract", optional = true }
 
 [features]
 load-dynamic = [ "voicevox-ort/load-dynamic" ]
+
 cuda = [ "voicevox-ort/cuda" ]
+tensorrt = [ "voicevox-ort/tensorrt" ]
+openvino = [ "voicevox-ort/openvino" ]
+onednn = [ "voicevox-ort/onednn" ]
+directml = [ "voicevox-ort/directml" ]
+nnapi = [ "voicevox-ort/nnapi" ]
+coreml = [ "voicevox-ort/coreml" ]
+xnnpack = [ "voicevox-ort/xnnpack" ]
+rocm = [ "voicevox-ort/rocm" ]
+acl = [ "voicevox-ort/acl" ]
+armnn = [ "voicevox-ort/armnn" ]
+tvm = [ "voicevox-ort/tvm" ]
+migraphx = [ "voicevox-ort/migraphx" ]
+rknpu = [ "voicevox-ort/rknpu" ]
+vitis = [ "voicevox-ort/vitis" ]
+cann = [ "voicevox-ort/cann" ]
+qnn = [ "voicevox-ort/qnn" ]
+webgpu = [ "voicevox-ort/webgpu" ]
+azure = [ "voicevox-ort/azure" ]
+
+backend-candle = [ "voicevox-ort/alternative-backend", "dep:ort-candle" ]
+backend-tract = [ "voicevox-ort/alternative-backend", "dep:ort-tract" ]
+
+[[example]]
+name = "yolov8"
+path = "yolov8.rs"

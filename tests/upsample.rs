@@ -1,9 +1,14 @@
+#![allow(clippy::tabs_in_doc_comments)]
+
 use std::path::Path;
 
 use image::RgbImage;
 use ndarray::{Array, ArrayViewD, CowArray, Ix4};
-use ort::{inputs, GraphOptimizationLevel, Session};
-use test_log::test;
+use ort::{
+	inputs,
+	session::{Session, builder::GraphOptimizationLevel},
+	value::TensorRef
+};
 
 fn load_input_image<P: AsRef<Path>>(name: P) -> RgbImage {
 	// Load image, converting to RGB format
@@ -48,28 +53,30 @@ fn upsample() -> ort::Result<()> {
 
 	let session_data =
 		std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("data").join("upsample.onnx")).expect("Could not open model from file");
-	let session = Session::builder()?
+	let mut session = Session::builder()?
 		.with_optimization_level(GraphOptimizationLevel::Level1)?
 		.with_intra_threads(1)?
 		.commit_from_memory(&session_data)
 		.expect("Could not read model from memory");
 
-	let metadata = session.metadata()?;
-	assert_eq!(metadata.name()?, "tf2onnx");
-	assert_eq!(metadata.producer()?, "tf2onnx");
+	{
+		let metadata = session.metadata()?;
+		assert_eq!(metadata.name()?, "tf2onnx");
+		assert_eq!(metadata.producer()?, "tf2onnx");
 
-	assert_eq!(session.inputs[0].input_type.tensor_dimensions().expect("input0 to be a tensor type"), &[-1, -1, -1, 3]);
-	assert_eq!(session.outputs[0].output_type.tensor_dimensions().expect("output0 to be a tensor type"), &[-1, -1, -1, 3]);
+		assert_eq!(&**session.inputs[0].input_type.tensor_shape().expect("input0 to be a tensor type"), [-1, -1, -1, 3]);
+		assert_eq!(&**session.outputs[0].output_type.tensor_shape().expect("output0 to be a tensor type"), [-1, -1, -1, 3]);
+	}
 
 	// Load image, converting to RGB format
 	let image_buffer = load_input_image(IMAGE_TO_LOAD);
 	let array = convert_image_to_cow_array(&image_buffer);
 
 	// Perform the inference
-	let outputs = session.run(inputs![&array]?)?;
+	let outputs = session.run(inputs![TensorRef::from_array_view(&array)?])?;
 
 	assert_eq!(outputs.len(), 1);
-	let output: ArrayViewD<f32> = outputs[0].try_extract_tensor()?;
+	let output: ArrayViewD<f32> = outputs[0].try_extract_array()?;
 
 	// The image should have doubled in size
 	assert_eq!(output.shape(), [1, 448, 448, 3]);
@@ -89,24 +96,24 @@ fn upsample_with_ort_model() -> ort::Result<()> {
 
 	let session_data =
 		std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("data").join("upsample.ort")).expect("Could not open model from file");
-	let session = Session::builder()?
+	let mut session = Session::builder()?
 		.with_optimization_level(GraphOptimizationLevel::Level1)?
 		.with_intra_threads(1)?
 		.commit_from_memory_directly(&session_data) // Zero-copy.
 		.expect("Could not read model from memory");
 
-	assert_eq!(session.inputs[0].input_type.tensor_dimensions().expect("input0 to be a tensor type"), &[-1, -1, -1, 3]);
-	assert_eq!(session.outputs[0].output_type.tensor_dimensions().expect("output0 to be a tensor type"), &[-1, -1, -1, 3]);
+	assert_eq!(&**session.inputs[0].input_type.tensor_shape().expect("input0 to be a tensor type"), [-1, -1, -1, 3]);
+	assert_eq!(&**session.outputs[0].output_type.tensor_shape().expect("output0 to be a tensor type"), [-1, -1, -1, 3]);
 
 	// Load image, converting to RGB format
 	let image_buffer = load_input_image(IMAGE_TO_LOAD);
 	let array = convert_image_to_cow_array(&image_buffer);
 
 	// Perform the inference
-	let outputs = session.run(inputs![&array]?)?;
+	let outputs = session.run(inputs![TensorRef::from_array_view(&array)?])?;
 
 	assert_eq!(outputs.len(), 1);
-	let output: ArrayViewD<f32> = outputs[0].try_extract_tensor()?;
+	let output: ArrayViewD<f32> = outputs[0].try_extract_array()?;
 
 	// The image should have doubled in size
 	assert_eq!(output.shape(), [1, 448, 448, 3]);

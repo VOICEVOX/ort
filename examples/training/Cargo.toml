@@ -6,13 +6,44 @@ edition = "2021"
 
 [dependencies]
 voicevox-ort = { path = "../../", features = [ "training" ] }
-ndarray = "0.15"
-tokenizers = { version = ">=0.13.4", default-features = false, features = [ "onig" ] }
-rand = "0.8"
-simd-json = "0.13"
-kdam = "0.5"
+tokenizers = { version = "0.21", default-features = false, features = [ "onig" ] }
+rand = "0.9"
+simd-json = "0.14"
+kdam = "0.6"
 tracing-subscriber = { version = "0.3", default-features = false, features = [ "env-filter", "fmt" ] }
 
 [features]
 load-dynamic = [ "voicevox-ort/load-dynamic" ]
+
 cuda = [ "voicevox-ort/cuda" ]
+tensorrt = [ "voicevox-ort/tensorrt" ]
+openvino = [ "voicevox-ort/openvino" ]
+onednn = [ "voicevox-ort/onednn" ]
+directml = [ "voicevox-ort/directml" ]
+nnapi = [ "voicevox-ort/nnapi" ]
+coreml = [ "voicevox-ort/coreml" ]
+xnnpack = [ "voicevox-ort/xnnpack" ]
+rocm = [ "voicevox-ort/rocm" ]
+acl = [ "voicevox-ort/acl" ]
+armnn = [ "voicevox-ort/armnn" ]
+tvm = [ "voicevox-ort/tvm" ]
+migraphx = [ "voicevox-ort/migraphx" ]
+rknpu = [ "voicevox-ort/rknpu" ]
+vitis = [ "voicevox-ort/vitis" ]
+cann = [ "voicevox-ort/cann" ]
+qnn = [ "voicevox-ort/qnn" ]
+webgpu = [ "voicevox-ort/webgpu" ]
+azure = [ "voicevox-ort/azure" ]
+
+[[bin]]
+name = "pretokenize"
+path = "misc/pretokenize.rs"
+[[example]]
+name = "train-clm"
+path = "train-clm.rs"
+[[example]]
+name = "train-clm-simple"
+path = "train-clm-simple.rs"
+
+[lints.rust.unexpected_cfgs]
+level = "allow"

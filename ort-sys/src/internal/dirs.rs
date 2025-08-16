@@ -1,5 +1,7 @@
 // based on https://github.com/dirs-dev/dirs-sys-rs/blob/main/src/lib.rs
 
+#![allow(unused)]
+
 pub const PYKE_ROOT: &str = "voicevox_ort";
 
 #[cfg(all(target_os = "windows", target_arch = "x86"))]
@@ -29,7 +31,7 @@ macro_rules! win32_extern {
 #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
 mod windows {
 	use std::{
-		ffi::{c_void, OsString},
+		ffi::{OsString, c_void},
 		os::windows::prelude::OsStringExt,
 		path::PathBuf,
 		ptr, slice
@@ -48,8 +50,8 @@ mod windows {
 		pub const fn from_u128(uuid: u128) -> Self {
 			Self {
 				data1: (uuid >> 96) as u32,
-				data2: (uuid >> 80 & 0xffff) as u16,
-				data3: (uuid >> 64 & 0xffff) as u16,
+				data2: ((uuid >> 80) & 0xffff) as u16,
+				data3: ((uuid >> 64) & 0xffff) as u16,
 				#[allow(clippy::cast_possible_truncation)]
 				data4: (uuid as u64).to_be_bytes()
 			}
@@ -102,7 +104,7 @@ pub fn cache_dir() -> Option<std::path::PathBuf> {
 mod unix {
 	use std::{
 		env,
-		ffi::{c_char, c_int, c_long, CStr, OsString},
+		ffi::{CStr, OsString, c_char, c_int, c_long},
 		mem,
 		os::unix::prelude::OsStringExt,
 		path::PathBuf,

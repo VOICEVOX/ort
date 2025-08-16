@@ -6,11 +6,39 @@ edition = "2021"
 
 [dependencies]
 voicevox-ort = { path = "../../", features = [ "fetch-models" ] }
-ndarray = "0.15"
-tokenizers = { version = ">=0.13.4", default-features = false, features = [ "onig" ] }
-rand = "0.8"
+tokenizers = { version = "0.21", default-features = false, features = [ "onig" ] }
+rand = "0.9"
 tracing-subscriber = { version = "0.3", default-features = false, features = [ "env-filter", "fmt" ] }
+
+ort-candle = { path = "../../backends/candle", optional = true }
+ort-tract = { path = "../../backends/tract", optional = true }
 
 [features]
 load-dynamic = [ "voicevox-ort/load-dynamic" ]
+
 cuda = [ "voicevox-ort/cuda" ]
+tensorrt = [ "voicevox-ort/tensorrt" ]
+openvino = [ "voicevox-ort/openvino" ]
+onednn = [ "voicevox-ort/onednn" ]
+directml = [ "voicevox-ort/directml" ]
+nnapi = [ "voicevox-ort/nnapi" ]
+coreml = [ "voicevox-ort/coreml" ]
+xnnpack = [ "voicevox-ort/xnnpack" ]
+rocm = [ "voicevox-ort/rocm" ]
+acl = [ "voicevox-ort/acl" ]
+armnn = [ "voicevox-ort/armnn" ]
+tvm = [ "voicevox-ort/tvm" ]
+migraphx = [ "voicevox-ort/migraphx" ]
+rknpu = [ "voicevox-ort/rknpu" ]
+vitis = [ "voicevox-ort/vitis" ]
+cann = [ "voicevox-ort/cann" ]
+qnn = [ "voicevox-ort/qnn" ]
+webgpu = [ "voicevox-ort/webgpu" ]
+azure = [ "voicevox-ort/azure" ]
+
+backend-candle = [ "voicevox-ort/alternative-backend", "dep:ort-candle" ]
+backend-tract = [ "voicevox-ort/alternative-backend", "dep:ort-tract" ]
+
+[[example]]
+name = "gpt2"
+path = "gpt2.rs"
