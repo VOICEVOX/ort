@@ -1,0 +1,222 @@
+---
+title: Execution providers
+description: Learn how to enable execution providers to leverage hardware acceleration.
+---
+
+# Execution providers
+
+import { Callout, Tabs } from 'nextra/components';
+
+Execution providers (EPs) enable ONNX Runtime to execute ONNX graphs with hardware acceleration. If you have specialized hardware like a GPU or NPU, execution providers can provide a massive performance boost to your `ort` applications. For more information on the intricacies of execution providers, see the [ONNX Runtime docs](https://onnxruntime.ai/docs/execution-providers/).
+
+ONNX Runtime must be compiled from source with support for each execution provider, though pyke provides precompiled binaries for some of the most common EPs, so all you have to do is enable the respective Cargo feature! Below is a table showing available EPs, their support in `ort`, and their binary availability status.
+
+* 🔷 - Supported by `ort`.
+* ✅ - Static binaries provided by pyke.
+
+| EP | Cargo feature | Supported | Binaries |
+|:-------- |:------- |:-------:|:------:|
+| [NVIDIA CUDA](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html) | `cuda` | 🔷 | ✅ |
+| [NVIDIA TensorRT](https://onnxruntime.ai/docs/execution-providers/TensorRT-ExecutionProvider.html) | `tensorrt` | 🔷 | ✅ |
+| [Microsoft DirectML](https://onnxruntime.ai/docs/execution-providers/DirectML-ExecutionProvider.html) | `directml` | 🔷 | ✅ |
+| [Apple CoreML](https://onnxruntime.ai/docs/execution-providers/CoreML-ExecutionProvider.html) | `coreml` | 🔷 | ✅ |
+| [AMD ROCm](https://onnxruntime.ai/docs/execution-providers/ROCm-ExecutionProvider.html) | `rocm` | 🔷 | ❌ |
+| [Intel OpenVINO](https://onnxruntime.ai/docs/execution-providers/OpenVINO-ExecutionProvider.html) | `openvino` | 🔷 | ❌ |
+| [Intel oneDNN](https://onnxruntime.ai/docs/execution-providers/oneDNN-ExecutionProvider.html) | `onednn` | 🔷 | ❌ |
+| [XNNPACK](https://onnxruntime.ai/docs/execution-providers/Xnnpack-ExecutionProvider.html) | `xnnpack` | 🔷 | ✅ |
+| [Qualcomm QNN](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html) | `qnn` | 🔷 | ❌ |
+| [Huawei CANN](https://onnxruntime.ai/docs/execution-providers/community-maintained/CANN-ExecutionProvider.html) | `cann` | 🔷 | ❌ |
+| [Android NNAPI](https://onnxruntime.ai/docs/execution-providers/NNAPI-ExecutionProvider.html) | `nnapi` | 🔷 | ❌ |
+| [Apache TVM](https://onnxruntime.ai/docs/execution-providers/community-maintained/TVM-ExecutionProvider.html) | `tvm` | 🔷 | ❌ |
+| [Arm ACL](https://onnxruntime.ai/docs/execution-providers/community-maintained/ACL-ExecutionProvider.html) | `acl` | 🔷 | ❌ |
+| [ArmNN](https://onnxruntime.ai/docs/execution-providers/community-maintained/ArmNN-ExecutionProvider.html) | `armnn` | 🔷 | ❌ |
+| [AMD MIGraphX](https://onnxruntime.ai/docs/execution-providers/MIGraphX-ExecutionProvider.html) | `migraphx` | 🔷 | ❌ |
+| [AMD Vitis AI](https://onnxruntime.ai/docs/execution-providers/Vitis-AI-ExecutionProvider.html) | `vitis` | 🔷 | ❌ |
+| [Rockchip RKNPU](https://onnxruntime.ai/docs/execution-providers/community-maintained/RKNPU-ExecutionProvider.html) | `rknpu` | 🔷 | ❌ |
+| WebGPU | `webgpu` | 🔷 | ✅ |
+| [Microsoft Azure](https://onnxruntime.ai/docs/execution-providers/Azure-ExecutionProvider.html) | `azure` | 🔷 | ❌ |
+
+## Registering execution providers
+<Callout type='info'>
+    To use an execution provider with `ort`, you'll need to enable its respective Cargo feature, e.g. the `cuda` feature to use CUDA, or the `coreml` feature to use CoreML.
+
+    ```toml Cargo.toml
+    [dependencies]
+    ort = { version = "2.0", features = [ "cuda" ] }
+    ```
+
+    See the table at the top of the page for the full list of EPs and their corresponding Cargo feature.
+</Callout>
+
+In order to configure sessions to use certain execution providers, you must **register** them when creating an environment or session. You can do this via the `SessionBuilder::with_execution_providers` method. For example, to register the CUDA execution provider for a session:
+
+```rust
+use ort::{execution_providers::CUDAExecutionProvider, session::Session};
+
+fn main() -> anyhow::Result<()> {
+    let session = Session::builder()?
+        .with_execution_providers([CUDAExecutionProvider::default().build()])?
+        .commit_from_file("model.onnx")?;
+
+    Ok(())
+}
+```
+
+You can, of course, specify multiple execution providers. `ort` will register all EPs specified, in order. If an EP does not support a certain operator in a graph, it will fall back to the next successfully registered EP, or to the CPU if all else fails.
+
+```rust
+use ort::{
+    execution_providers::{CoreMLExecutionProvider, CUDAExecutionProvider, DirectMLExecutionProvider, TensorRTExecutionProvider},
+    session::Session
+};
+
+fn main() -> anyhow::Result<()> {
+    let session = Session::builder()?
+        .with_execution_providers([
+            // Prefer TensorRT over CUDA.
+            TensorRTExecutionProvider::default().build(),
+            CUDAExecutionProvider::default().build(),
+            // Use DirectML on Windows if NVIDIA EPs are not available
+            DirectMLExecutionProvider::default().build(),
+            // Or use ANE on Apple platforms
+            CoreMLExecutionProvider::default().build()
+        ])?
+        .commit_from_file("model.onnx")?;
+
+    Ok(())
+}
+```
+
+## Configuring EPs
+EPs have configuration options to control behavior or increase performance. Each `XXXExecutionProvider` struct returns a builder with configuration methods. See the [API reference](https://docs.rs/ort/2.0.0-rc.10/ort/execution_providers/index.html#reexports) for the EP structs for more information on which options are supported and what they do.
+
+```rust
+use ort::{execution_providers::CoreMLExecutionProvider, session::Session};
+
+fn main() -> anyhow::Result<()> {
+    let session = Session::builder()?
+        .with_execution_providers([
+            CoreMLExecutionProvider::default()
+                // this model uses control flow operators, so enable CoreML on subgraphs too
+                .with_subgraphs()
+                // only use the ANE as the CoreML CPU implementation is super slow for this model
+                .with_ane_only()
+                .build()
+        ])?
+        .commit_from_file("model.onnx")?;
+
+    Ok(())
+}
+```
+
+## Fallback behavior
+`ort` will silently fail and fall back to executing on the CPU if all execution providers fail to register. In many cases, though, you'll want to show the user an error message when an EP fails to register, or outright abort the process.
+
+You can configure an EP to return an error on failure by adding `.error_on_failure()` after you `.build()` it. In this example, if CUDA doesn't register successfully, the program will exit with an error at `with_execution_providers`:
+```rust
+use ort::{execution_providers::CoreMLExecutionProvider, session::Session};
+
+fn main() -> anyhow::Result<()> {
+    let session = Session::builder()?
+        .with_execution_providers([
+            CUDAExecutionProvider::default().build().error_on_failure()
+        ])?
+        .commit_from_file("model.onnx")?;
+
+    Ok(())
+}
+```
+
+If you require more complex error handling, you can also manually register execution providers via the `ExecutionProvider::register` method:
+
+```rust
+use ort::{
+    execution_providers::{CUDAExecutionProvider, ExecutionProvider},
+    session::Session
+};
+
+fn main() -> anyhow::Result<()> {
+    let builder = Session::builder()?;
+
+    let cuda = CUDAExecutionProvider::default();
+    if cuda.register(&builder).is_err() {
+        eprintln!("Failed to register CUDA!");
+        std::process::exit(1);
+    }
+
+    let session = builder.commit_from_file("model.onnx")?;
+
+    Ok(())
+}
+```
+
+You can also check whether ONNX Runtime is even compiled with support for the execution provider with the `is_available` method.
+
+```rust
+use ort::{
+    execution_providers::{CoreMLExecutionProvider, ExecutionProvider},
+    session::Session
+};
+
+fn main() -> anyhow::Result<()> {
+    let builder = Session::builder()?;
+
+    let coreml = CoreMLExecutionProvider::default();
+    if !coreml.is_available() {
+        eprintln!("Please compile ONNX Runtime with CoreML!");
+        std::process::exit(1);
+    }
+
+    // Note that even though ONNX Runtime was compiled with CoreML, registration could still fail!
+    coreml.register(&builder)?;
+
+    let session = builder.commit_from_file("model.onnx")?;
+
+    Ok(())
+}
+```
+
+## Global defaults
+You can configure `ort` to attempt to register a list of execution providers for all sessions created in an environment.
+
+```rust
+use ort::{execution_providers::CUDAExecutionProvider, session::Session};
+
+fn main() -> anyhow::Result<()> {
+    ort::init()
+        .with_execution_providers([CUDAExecutionProvider::default().build()])
+        .commit()?;
+
+    let session = Session::builder()?.commit_from_file("model.onnx")?;
+    // The session will attempt to register the CUDA EP
+    // since we configured the environment default.
+
+    Ok(())
+}
+```
+
+<Callout type='warning'>
+    `ort::init` must come before you create any sessions, otherwise the configuration will not take effect!
+</Callout>
+
+Sessions configured with their own execution providers will *extend* the execution provider defaults, rather than overriding them.
+
+## Troubleshooting
+If it seems like the execution provider is not registering properly, or you are not getting acceptable performance, see the [Troubleshooting: Performance](/troubleshooting/performance) page for more information on how to debug any EP issues.
+
+## Notes
+
+### Dynamically-linked EP requirements
+Certain EPs like CUDA and TensorRT use a separate interface that require them to be compiled as dynamic libraries which are loaded at runtime when the EP is registered. The DirectML and WebGPU EP do not use this interface, but do require helper dylibs.
+
+Due to the quirks of dynamic library loading, you may encounter issues with builds including these EPs due to ONNX Runtime failing to find the dylibs at runtime. `ort`'s `copy-dylibs` Cargo feature (which is enabled by default) tries to alleviate this issue by symlinking these dylibs into your `target` folder so they can be found by your application when in development. On Windows platforms that don't have [Developer Mode](https://learn.microsoft.com/en-us/windows/uwp/get-started/enable-your-device-for-development) enabled, a copy is instead performed (excluding examples and tests). On other platforms, additional setup is required to get the application to load dylibs from its parent folder.
+
+See [Runtime dylib loading](/setup/linking#runtime-dylib-loading) for more information.
+
+### CUDA
+`ort` provides binaries for CUDA 12 with cuDNN 9.x only. Make sure the correct version of CUDA & cuDNN are installed and available on the `PATH`.
+
+### WebGPU
+The WebGPU EP is **experimental** and may produce incorrect results/crashes; these issues should be reported upstream as there's unfortunately nothing we can do about them.
+
+WebGPU binaries are provided for Windows & Linux. On Windows, the build supports running on DirectX 12 or DirectX 11. On Linux, it supports Vulkan & OpenGL/GLES.

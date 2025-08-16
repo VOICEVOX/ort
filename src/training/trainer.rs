@@ -1,24 +1,31 @@
-use std::{
-	ffi::CString,
-	path::Path,
-	ptr::{self, NonNull},
-	sync::Arc
+use alloc::borrow::Cow;
+use core::{
+	fmt,
+	ptr::{self, NonNull}
 };
+use std::path::Path;
 
 use ort_sys::c_char;
 
-use super::{trainsys, Checkpoint, Optimizer};
+use super::{Checkpoint, Optimizer, training_api};
 use crate::{
-	char_p_to_string,
-	error::{assert_non_null_pointer, status_to_result},
-	Allocator, Error, Result, RunOptions, SessionBuilder, SessionInputValue, SessionInputs, SessionOutputs, Value
+	AsPointer, char_p_to_string,
+	error::{Result, status_to_result},
+	memory::Allocator,
+	ortsys,
+	session::{RunOptions, SessionInputValue, SessionInputs, SessionOutputs, builder::SessionBuilder},
+	tensor::IntoTensorElementType,
+	util::with_cstr_ptr_array,
+	value::{Tensor, Value}
 };
 
 #[derive(Debug)]
 pub struct Trainer {
-	pub(crate) ptr: NonNull<ort_sys::OrtTrainingSession>,
+	ptr: NonNull<ort_sys::OrtTrainingSession>,
 	train_output_names: Vec<String>,
-	optimizer: Optimizer,
+	eval_output_names: Vec<String>,
+	train_input_names: Vec<String>,
+	eval_input_names: Vec<String>,
 	ckpt: Checkpoint,
 	_allocator: Allocator
 }
@@ -36,38 +43,22 @@ impl Trainer {
 		let eval_model_path = crate::util::path_to_os_char(eval_model_path);
 		let optimizer_model_path = crate::util::path_to_os_char(optimizer_model_path);
 
-		let env = crate::get_environment()?;
+		let env = crate::environment::get_environment()?;
 
 		let mut ptr: *mut ort_sys::OrtTrainingSession = ptr::null_mut();
-		trainsys![unsafe CreateTrainingSession(env.ptr(), session_options.session_options_ptr.as_ptr(), ckpt.ptr.as_ptr(), training_model_path.as_ptr(), eval_model_path.as_ptr(), optimizer_model_path.as_ptr(), &mut ptr) -> Error::CreateSession; nonNull(ptr)];
-
-		let ptr = unsafe { NonNull::new_unchecked(ptr) };
-
-		let mut train_output_len = 0;
-		trainsys![unsafe TrainingSessionGetTrainingModelOutputCount(ptr.as_ptr(), &mut train_output_len) -> Error::CreateSession];
-		let train_output_names = (0..train_output_len)
-			.map(|i| {
-				let mut name_bytes: *mut c_char = std::ptr::null_mut();
-				trainsys![unsafe TrainingSessionGetTrainingModelOutputName(ptr.as_ptr(), i, allocator.ptr.as_ptr(), &mut name_bytes) -> Error::CreateSession];
-				let name = match char_p_to_string(name_bytes) {
-					Ok(name) => name,
-					Err(e) => {
-						unsafe { allocator.free(name_bytes) };
-						return Err(e);
-					}
-				};
-				unsafe { allocator.free(name_bytes) };
-				Ok(name)
-			})
-			.collect::<Result<Vec<String>>>()?;
-
-		Ok(Self {
-			ptr,
-			_allocator: allocator,
-			train_output_names,
-			optimizer: Optimizer(ptr),
-			ckpt
-		})
+		ortsys![@training:
+			unsafe CreateTrainingSession(
+				env.ptr(),
+				session_options.ptr(),
+				ckpt.ptr.as_ptr(),
+				training_model_path.as_ptr(),
+				eval_model_path.as_ptr(),
+				optimizer_model_path.as_ptr(),
+				&mut ptr
+			)?;
+			nonNull(ptr)
+		];
+		Self::new_inner(ptr, allocator, ckpt)
 	}
 
 	pub fn new_from_artifacts(
@@ -92,44 +83,105 @@ impl Trainer {
 		)
 	}
 
+	pub fn new_from_memory(
+		session_options: SessionBuilder,
+		allocator: Allocator,
+		ckpt: Checkpoint,
+		training_model: &[u8],
+		eval_model: &[u8],
+		optimizer_model: &[u8]
+	) -> Result<Self> {
+		let env = crate::environment::get_environment()?;
+
+		let mut ptr: *mut ort_sys::OrtTrainingSession = ptr::null_mut();
+		ortsys![@training:
+			unsafe CreateTrainingSessionFromBuffer(
+				env.ptr(),
+				session_options.ptr(),
+				ckpt.ptr.as_ptr(),
+				training_model.as_ptr().cast(),
+				training_model.len(),
+				eval_model.as_ptr().cast(),
+				eval_model.len(),
+				optimizer_model.as_ptr().cast(),
+				optimizer_model.len(),
+				&mut ptr
+			)?;
+			nonNull(ptr)
+		];
+		Self::new_inner(ptr, allocator, ckpt)
+	}
+
+	fn new_inner(ptr: NonNull<ort_sys::OrtTrainingSession>, allocator: Allocator, ckpt: Checkpoint) -> Result<Self> {
+		let api = training_api()?;
+		let train_output_names =
+			extract_io_names(ptr, &allocator, api.TrainingSessionGetTrainingModelOutputCount, api.TrainingSessionGetTrainingModelOutputName)?;
+		let eval_output_names = extract_io_names(ptr, &allocator, api.TrainingSessionGetEvalModelOutputCount, api.TrainingSessionGetEvalModelOutputName)?;
+
+		let train_input_names = extract_io_names(ptr, &allocator, api.TrainingSessionGetTrainingModelInputCount, api.TrainingSessionGetTrainingModelInputName)?;
+		let eval_input_names = extract_io_names(ptr, &allocator, api.TrainingSessionGetEvalModelInputCount, api.TrainingSessionGetEvalModelInputName)?;
+
+		Ok(Self {
+			ptr,
+			_allocator: allocator,
+			train_output_names,
+			train_input_names,
+			eval_output_names,
+			eval_input_names,
+			ckpt
+		})
+	}
+
 	pub fn step<'s, 'i1, 'v1: 'i1, 'i2: 'i1, 'v2: 'i2 + 'i1, const N1: usize, const N2: usize>(
 		&'s self,
 		inputs: impl Into<SessionInputs<'i1, 'v1, N1>>,
 		labels: impl Into<SessionInputs<'i2, 'v2, N2>>
-	) -> Result<SessionOutputs<'_, 's>> {
+	) -> Result<SessionOutputs<'s>> {
 		match inputs.into() {
 			SessionInputs::ValueSlice(input_values) => match labels.into() {
-				SessionInputs::ValueSlice(labels) => self.step_inner(input_values.iter().chain(labels), None),
-				SessionInputs::ValueArray(labels) => self.step_inner(input_values.iter().chain(labels.iter()), None),
-				SessionInputs::ValueMap(_) => unimplemented!("named values not supported?")
+				SessionInputs::ValueSlice(labels) => self.step_inner(input_values.iter().chain(labels).map(Some), None),
+				SessionInputs::ValueArray(labels) => self.step_inner(input_values.iter().chain(labels.iter()).map(Some), None),
+				SessionInputs::ValueMap(labels) => {
+					let labels = mapped_inputs(&self.train_input_names, &labels);
+					self.step_inner(input_values.iter().map(Some).chain(labels), None)
+				}
 			},
 			SessionInputs::ValueArray(input_values) => match labels.into() {
-				SessionInputs::ValueSlice(labels) => self.step_inner(input_values.iter().chain(labels), None),
-				SessionInputs::ValueArray(labels) => self.step_inner(input_values.iter().chain(labels.iter()), None),
-				SessionInputs::ValueMap(_) => unimplemented!("named values not supported?")
+				SessionInputs::ValueSlice(labels) => self.step_inner(input_values.iter().chain(labels).map(Some), None),
+				SessionInputs::ValueArray(labels) => self.step_inner(input_values.iter().chain(labels.iter()).map(Some), None),
+				SessionInputs::ValueMap(labels) => {
+					let labels = mapped_inputs(&self.train_input_names, &labels);
+					self.step_inner(input_values.iter().map(Some).chain(labels), None)
+				}
 			},
-			SessionInputs::ValueMap(_) => unimplemented!("named values not supported?")
+			SessionInputs::ValueMap(input_values) => {
+				let input_values = mapped_inputs(&self.train_input_names, &input_values);
+				match labels.into() {
+					SessionInputs::ValueSlice(labels) => self.step_inner(input_values.into_iter().chain(labels.iter().map(Some)), None),
+					SessionInputs::ValueArray(labels) => self.step_inner(input_values.into_iter().chain(labels.iter().map(Some)), None),
+					SessionInputs::ValueMap(labels) => {
+						let labels = mapped_inputs(&self.train_input_names, &labels);
+						self.step_inner(input_values.into_iter().chain(labels), None)
+					}
+				}
+			}
 		}
 	}
 
 	fn step_inner<'r, 's: 'r, 'i1, 'v1: 'i1, 'i2, 'v2: 'i2>(
 		&'s self,
-		input_values: impl Iterator<Item = &'i1 SessionInputValue<'v1>>,
+		input_values: impl Iterator<Item = Option<&'i1 SessionInputValue<'v1>>>,
 		run_options: Option<&'r RunOptions>
-	) -> Result<SessionOutputs<'r, 's>> {
-		let mut output_tensor_ptrs: Vec<*mut ort_sys::OrtValue> = vec![std::ptr::null_mut(); self.train_output_names.len()];
+	) -> Result<SessionOutputs<'r>> {
+		let mut output_tensor_ptrs: Vec<*mut ort_sys::OrtValue> = vec![ptr::null_mut(); self.train_output_names.len()];
 
-		let input_ort_values: Vec<*const ort_sys::OrtValue> = input_values.map(|input_array_ort| input_array_ort.ptr().cast_const()).collect();
+		let input_ort_values: Vec<*const ort_sys::OrtValue> = input_values.map(|v| v.map_or(ptr::null(), |v| v.ptr())).collect();
 
-		let run_options_ptr = if let Some(run_options) = &run_options {
-			run_options.run_options_ptr.as_ptr()
-		} else {
-			std::ptr::null_mut()
-		};
+		let run_options_ptr = if let Some(run_options) = &run_options { run_options.ptr() } else { ptr::null() };
 
-		trainsys![unsafe TrainStep(self.ptr.as_ptr(), run_options_ptr, input_ort_values.len(), input_ort_values.as_ptr(), output_tensor_ptrs.len(), output_tensor_ptrs.as_mut_ptr()) -> Error::SessionRun];
+		ortsys![@training: unsafe TrainStep(self.ptr.as_ptr(), run_options_ptr, input_ort_values.len(), input_ort_values.as_ptr(), output_tensor_ptrs.len(), output_tensor_ptrs.as_mut_ptr())?];
 
-		let outputs: Vec<Value> = output_tensor_ptrs
+		let outputs = output_tensor_ptrs
 			.into_iter()
 			.map(|tensor_ptr| unsafe {
 				// TODO: `Value` should absolutely be refactored to accept a different backing pointer than `SharedSessionInner`.
@@ -138,47 +190,59 @@ impl Trainer {
 			})
 			.collect();
 
-		Ok(SessionOutputs::new(self.train_output_names.iter().map(|o| o.as_str()), outputs))
+		Ok(SessionOutputs::new(self.train_output_names.iter().map(String::as_str).collect(), outputs))
 	}
 
 	pub fn eval_step<'s, 'i1, 'v1: 'i1, 'i2: 'i1, 'v2: 'i2 + 'i1, const N1: usize, const N2: usize>(
 		&'s self,
 		inputs: impl Into<SessionInputs<'i1, 'v1, N1>>,
 		labels: impl Into<SessionInputs<'i2, 'v2, N2>>
-	) -> Result<SessionOutputs<'_, 's>> {
+	) -> Result<SessionOutputs<'s>> {
 		match inputs.into() {
 			SessionInputs::ValueSlice(input_values) => match labels.into() {
-				SessionInputs::ValueSlice(labels) => self.eval_step_inner(input_values.iter().chain(labels), None),
-				SessionInputs::ValueArray(labels) => self.eval_step_inner(input_values.iter().chain(labels.iter()), None),
-				SessionInputs::ValueMap(_) => unimplemented!("named values not supported?")
+				SessionInputs::ValueSlice(labels) => self.eval_step_inner(input_values.iter().chain(labels).map(Some), None),
+				SessionInputs::ValueArray(labels) => self.eval_step_inner(input_values.iter().chain(labels.iter()).map(Some), None),
+				SessionInputs::ValueMap(labels) => {
+					let labels = mapped_inputs(&self.eval_input_names, &labels);
+					self.eval_step_inner(input_values.iter().map(Some).chain(labels), None)
+				}
 			},
 			SessionInputs::ValueArray(input_values) => match labels.into() {
-				SessionInputs::ValueSlice(labels) => self.eval_step_inner(input_values.iter().chain(labels), None),
-				SessionInputs::ValueArray(labels) => self.eval_step_inner(input_values.iter().chain(labels.iter()), None),
-				SessionInputs::ValueMap(_) => unimplemented!("named values not supported?")
+				SessionInputs::ValueSlice(labels) => self.eval_step_inner(input_values.iter().chain(labels).map(Some), None),
+				SessionInputs::ValueArray(labels) => self.eval_step_inner(input_values.iter().chain(labels.iter()).map(Some), None),
+				SessionInputs::ValueMap(labels) => {
+					let labels = mapped_inputs(&self.eval_input_names, &labels);
+					self.eval_step_inner(input_values.iter().map(Some).chain(labels), None)
+				}
 			},
-			SessionInputs::ValueMap(_) => unimplemented!("named values not supported?")
+			SessionInputs::ValueMap(input_values) => {
+				let input_values = mapped_inputs(&self.eval_input_names, &input_values);
+				match labels.into() {
+					SessionInputs::ValueSlice(labels) => self.eval_step_inner(input_values.into_iter().chain(labels.iter().map(Some)), None),
+					SessionInputs::ValueArray(labels) => self.eval_step_inner(input_values.into_iter().chain(labels.iter().map(Some)), None),
+					SessionInputs::ValueMap(labels) => {
+						let labels = mapped_inputs(&self.eval_input_names, &labels);
+						self.eval_step_inner(input_values.into_iter().chain(labels), None)
+					}
+				}
+			}
 		}
 	}
 
 	fn eval_step_inner<'r, 's: 'r, 'i1, 'v1: 'i1, 'i2, 'v2: 'i2>(
 		&'s self,
-		input_values: impl Iterator<Item = &'i1 SessionInputValue<'v1>>,
+		input_values: impl Iterator<Item = Option<&'i1 SessionInputValue<'v1>>>,
 		run_options: Option<&'r RunOptions>
-	) -> Result<SessionOutputs<'r, 's>> {
-		let mut output_tensor_ptrs: Vec<*mut ort_sys::OrtValue> = vec![std::ptr::null_mut(); self.train_output_names.len()];
+	) -> Result<SessionOutputs<'r>> {
+		let mut output_tensor_ptrs: Vec<*mut ort_sys::OrtValue> = vec![ptr::null_mut(); self.eval_output_names.len()];
 
-		let input_ort_values: Vec<*const ort_sys::OrtValue> = input_values.map(|input_array_ort| input_array_ort.ptr().cast_const()).collect();
+		let input_ort_values: Vec<*const ort_sys::OrtValue> = input_values.map(|v| v.map_or(ptr::null(), |v| v.ptr())).collect();
 
-		let run_options_ptr = if let Some(run_options) = &run_options {
-			run_options.run_options_ptr.as_ptr()
-		} else {
-			std::ptr::null_mut()
-		};
+		let run_options_ptr = if let Some(run_options) = &run_options { run_options.ptr() } else { ptr::null() };
 
-		trainsys![unsafe EvalStep(self.ptr.as_ptr(), run_options_ptr, input_ort_values.len(), input_ort_values.as_ptr(), output_tensor_ptrs.len(), output_tensor_ptrs.as_mut_ptr()) -> Error::SessionRun];
+		ortsys![@training: unsafe EvalStep(self.ptr.as_ptr(), run_options_ptr, input_ort_values.len(), input_ort_values.as_ptr(), output_tensor_ptrs.len(), output_tensor_ptrs.as_mut_ptr())?];
 
-		let outputs: Vec<Value> = output_tensor_ptrs
+		let outputs = output_tensor_ptrs
 			.into_iter()
 			.map(|tensor_ptr| unsafe {
 				// TODO: `Value` should absolutely be refactored to accept a different backing pointer than `SharedSessionInner`.
@@ -187,39 +251,36 @@ impl Trainer {
 			})
 			.collect();
 
-		Ok(SessionOutputs::new(self.train_output_names.iter().map(|o| o.as_str()), outputs))
+		Ok(SessionOutputs::new(self.eval_output_names.iter().map(String::as_str).collect(), outputs))
 	}
 
 	pub fn export<O: AsRef<str>>(&self, out_path: impl AsRef<Path>, output_names: impl AsRef<[O]>) -> Result<()> {
 		let out_path = crate::util::path_to_os_char(out_path);
-
-		let output_names_ptr: Vec<*const c_char> = output_names
-			.as_ref()
-			.iter()
-			.map(|output| CString::new(output.as_ref()).unwrap_or_else(|_| unreachable!()))
-			.map(|n| n.into_raw().cast_const())
-			.collect();
-
-		let res = trainsys![unsafe ExportModelForInferencing(self.ptr.as_ptr(), out_path.as_ptr(), output_names_ptr.len(), output_names_ptr.as_ptr())];
-
-		// Reconvert name ptrs to CString so drop impl is called and memory is freed
-		drop(
-			output_names_ptr
-				.into_iter()
-				.map(|p| {
-					assert_non_null_pointer(p, "c_char for CString")?;
-					unsafe { Ok(CString::from_raw(p.cast_mut().cast())) }
-				})
-				.collect::<Result<Vec<_>>>()?
-		);
-
-		status_to_result(res).map_err(Error::CreateSession)?;
-
+		with_cstr_ptr_array(output_names.as_ref(), &|output_name_ptrs| {
+			ortsys![@training: unsafe ExportModelForInferencing(self.ptr.as_ptr(), out_path.as_ptr(), output_name_ptrs.len(), output_name_ptrs.as_ptr())?];
+			Ok(())
+		})?;
 		Ok(())
 	}
 
-	pub fn optimizer(&self) -> &Optimizer {
-		&self.optimizer
+	pub fn num_params(&self, trainable_only: bool) -> Result<usize> {
+		let mut out = 0;
+		ortsys![@training: unsafe GetParametersSize(self.ptr.as_ptr(), &mut out, trainable_only)?];
+		Ok(out)
+	}
+
+	pub fn copy_parameters_to<T: IntoTensorElementType + fmt::Debug>(&self, value: &mut Tensor<T>, trainable_only: bool) -> Result<()> {
+		ortsys![@training: unsafe CopyParametersToBuffer(self.ptr.as_ptr(), value.ptr_mut(), trainable_only)?];
+		Ok(())
+	}
+
+	pub fn copy_parameters_from<T: IntoTensorElementType + fmt::Debug>(&mut self, value: &Tensor<T>, trainable_only: bool) -> Result<()> {
+		ortsys![@training: unsafe CopyBufferToParameters(self.ptr.as_ptr(), value.ptr().cast_mut(), trainable_only)?];
+		Ok(())
+	}
+
+	pub fn optimizer(&self) -> Optimizer<'_> {
+		Optimizer::new(self.ptr)
 	}
 
 	pub fn checkpoint(&self) -> &Checkpoint {
@@ -227,9 +288,61 @@ impl Trainer {
 	}
 }
 
+impl AsPointer for Trainer {
+	type Sys = ort_sys::OrtTrainingSession;
+
+	fn ptr(&self) -> *const Self::Sys {
+		self.ptr.as_ptr()
+	}
+}
+
 impl Drop for Trainer {
 	fn drop(&mut self) {
-		tracing::trace!("dropping trainer");
-		trainsys![unsafe ReleaseTrainingSession(self.ptr.as_ptr())];
+		crate::trace!("dropping trainer");
+		ortsys![@training: unsafe ReleaseTrainingSession(self.ptr.as_ptr())];
 	}
+}
+
+fn mapped_inputs<'v, 'a>(input_names: &[String], values: &'a [(Cow<'_, str>, SessionInputValue<'v>)]) -> Vec<Option<&'a SessionInputValue<'v>>> {
+	let mut out = Vec::with_capacity(input_names.len());
+	'o: for want_name in input_names {
+		for (name, value) in values {
+			if want_name == name {
+				out.push(Some(value));
+				continue 'o;
+			}
+		}
+		out.push(None);
+	}
+	out
+}
+
+fn extract_io_names(
+	ptr: NonNull<ort_sys::OrtTrainingSession>,
+	allocator: &Allocator,
+	get_count: unsafe extern "system" fn(sess: *const ort_sys::OrtTrainingSession, out: *mut usize) -> ort_sys::OrtStatusPtr,
+	get_name: unsafe extern "system" fn(
+		sess: *const ort_sys::OrtTrainingSession,
+		index: usize,
+		allocator: *mut ort_sys::OrtAllocator,
+		output: *mut *const c_char
+	) -> ort_sys::OrtStatusPtr
+) -> Result<Vec<String>> {
+	let mut count = 0;
+	unsafe { status_to_result(get_count(ptr.as_ptr(), &mut count)) }?;
+	(0..count)
+		.map(|i| {
+			let mut name_bytes: *const c_char = ptr::null();
+			unsafe { status_to_result(get_name(ptr.as_ptr(), i, allocator.ptr().cast_mut(), &mut name_bytes)) }?;
+			let name = match char_p_to_string(name_bytes) {
+				Ok(name) => name,
+				Err(e) => {
+					unsafe { allocator.free(name_bytes.cast_mut()) };
+					return Err(e);
+				}
+			};
+			unsafe { allocator.free(name_bytes.cast_mut()) };
+			Ok(name)
+		})
+		.collect::<Result<Vec<String>>>()
 }

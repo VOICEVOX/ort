@@ -1,67 +1,83 @@
-use std::num::NonZeroUsize;
+use alloc::string::ToString;
+use core::num::NonZeroUsize;
 
-use crate::{
-	error::{Error, Result},
-	execution_providers::{ExecutionProvider, ExecutionProviderDispatch},
-	session::SessionBuilder
-};
+use super::{ExecutionProvider, ExecutionProviderOptions, RegisterError};
+use crate::{error::Result, session::builder::SessionBuilder};
 
+/// [XNNPACK execution provider](https://onnxruntime.ai/docs/execution-providers/Xnnpack-ExecutionProvider.html) for
+/// ARM, x86, and WASM platforms.
+///
+/// # Threading
+/// XNNPACK uses its own threadpool separate from the [`Session`](crate::session::Session)'s intra-op threadpool. If
+/// most of your model's compute lies in nodes supported by XNNPACK (i.e. `Conv`, `Gemm`, `MatMul`), it's best to
+/// disable the session intra-op threadpool to reduce contention:
+/// ```no_run
+/// # use core::num::NonZeroUsize;
+/// # use ort::{execution_providers::xnnpack::XNNPACKExecutionProvider, session::Session};
+/// # fn main() -> ort::Result<()> {
+/// let session = Session::builder()?
+/// 	.with_intra_op_spinning(false)?
+/// 	.with_intra_threads(1)?
+/// 	.with_execution_providers([XNNPACKExecutionProvider::default()
+/// 		.with_intra_op_num_threads(NonZeroUsize::new(4).unwrap())
+/// 		.build()])?
+/// 	.commit_from_file("model.onnx")?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Default, Clone)]
 pub struct XNNPACKExecutionProvider {
-	intra_op_num_threads: Option<NonZeroUsize>
+	options: ExecutionProviderOptions
 }
+
+super::impl_ep!(arbitrary; XNNPACKExecutionProvider);
 
 impl XNNPACKExecutionProvider {
+	/// Configures the number of threads to use for XNNPACK's internal intra-op threadpool.
+	///
+	/// ```
+	/// # use core::num::NonZeroUsize;
+	/// # use ort::{execution_providers::xnnpack::XNNPACKExecutionProvider, session::Session};
+	/// # fn main() -> ort::Result<()> {
+	/// let ep = XNNPACKExecutionProvider::default()
+	/// 	.with_intra_op_num_threads(NonZeroUsize::new(4).unwrap())
+	/// 	.build();
+	/// # Ok(())
+	/// # }
+	/// ```
 	#[must_use]
 	pub fn with_intra_op_num_threads(mut self, num_threads: NonZeroUsize) -> Self {
-		self.intra_op_num_threads = Some(num_threads);
+		self.options.set("intra_op_num_threads", num_threads.to_string());
 		self
-	}
-
-	#[must_use]
-	pub fn build(self) -> ExecutionProviderDispatch {
-		self.into()
-	}
-}
-
-impl From<XNNPACKExecutionProvider> for ExecutionProviderDispatch {
-	fn from(value: XNNPACKExecutionProvider) -> Self {
-		ExecutionProviderDispatch::new(value)
 	}
 }
 
 impl ExecutionProvider for XNNPACKExecutionProvider {
-	fn as_str(&self) -> &'static str {
-		"XNNPACKExecutionProvider"
+	fn name(&self) -> &'static str {
+		"XnnpackExecutionProvider"
 	}
 
 	fn supported_by_platform(&self) -> bool {
-		cfg!(any(
-			target_arch = "aarch64",
-			all(target_arch = "arm", any(target_os = "linux", target_os = "android")),
-			target_arch = "x86_64",
-			target_arch = "wasm32"
-		))
+		cfg!(any(target_arch = "aarch64", all(target_arch = "arm", any(target_os = "linux", target_os = "android")), target_arch = "x86_64"))
 	}
 
 	#[allow(unused, unreachable_code)]
-	fn register(&self, session_builder: &SessionBuilder) -> Result<()> {
+	fn register(&self, session_builder: &mut SessionBuilder) -> Result<(), RegisterError> {
 		#[cfg(any(feature = "load-dynamic", feature = "xnnpack"))]
 		{
-			let (key_ptrs, value_ptrs, len, _keys, _values) = super::map_keys! {
-				intra_op_num_threads = self.intra_op_num_threads.as_ref()
-			};
-			let ep_name = std::ffi::CString::new("XNNPACK").unwrap_or_else(|_| unreachable!());
-			return crate::error::status_to_result(crate::ortsys![unsafe SessionOptionsAppendExecutionProvider(
-				session_builder.session_options_ptr.as_ptr(),
-				ep_name.as_ptr(),
-				key_ptrs.as_ptr(),
-				value_ptrs.as_ptr(),
-				len as _,
-			)])
-			.map_err(Error::ExecutionProvider);
+			use crate::{AsPointer, ortsys};
+
+			let ffi_options = self.options.to_ffi();
+			ortsys![unsafe SessionOptionsAppendExecutionProvider(
+				session_builder.ptr_mut(),
+				c"XNNPACK".as_ptr().cast::<core::ffi::c_char>(),
+				ffi_options.key_ptrs(),
+				ffi_options.value_ptrs(),
+				ffi_options.len(),
+			)?];
+			return Ok(());
 		}
 
-		Err(Error::ExecutionProviderNotRegistered(self.as_str()))
+		Err(RegisterError::MissingFeature)
 	}
 }

@@ -1,40 +1,37 @@
-use crate::{
-	error::{status_to_result, Error, Result},
-	execution_providers::{ExecutionProvider, ExecutionProviderDispatch},
-	ortsys,
-	session::SessionBuilder
-};
+use super::{ExecutionProvider, RegisterError};
+use crate::{AsPointer, error::Result, ortsys, session::builder::SessionBuilder};
 
+/// The default CPU execution provider, powered by MLAS.
 #[derive(Debug, Default, Clone)]
 pub struct CPUExecutionProvider {
 	use_arena: bool
 }
 
+super::impl_ep!(CPUExecutionProvider);
+
 impl CPUExecutionProvider {
+	/// Enable/disable the usage of the arena allocator.
+	///
+	/// ```
+	/// # use ort::{execution_providers::cpu::CPUExecutionProvider, session::Session};
+	/// # fn main() -> ort::Result<()> {
+	/// let ep = CPUExecutionProvider::default().with_arena_allocator(true).build();
+	/// # Ok(())
+	/// # }
+	/// ```
 	#[must_use]
-	pub fn with_arena_allocator(mut self) -> Self {
-		self.use_arena = true;
+	pub fn with_arena_allocator(mut self, enable: bool) -> Self {
+		self.use_arena = enable;
 		self
-	}
-
-	#[must_use]
-	pub fn build(self) -> ExecutionProviderDispatch {
-		self.into()
-	}
-}
-
-impl From<CPUExecutionProvider> for ExecutionProviderDispatch {
-	fn from(value: CPUExecutionProvider) -> Self {
-		ExecutionProviderDispatch::new(value)
 	}
 }
 
 impl ExecutionProvider for CPUExecutionProvider {
-	fn as_str(&self) -> &'static str {
+	fn name(&self) -> &'static str {
 		"CPUExecutionProvider"
 	}
 
-	/// The CPU execution provider is always available.
+	// The CPU execution provider is always available.
 	fn is_available(&self) -> Result<bool> {
 		Ok(true)
 	}
@@ -43,11 +40,12 @@ impl ExecutionProvider for CPUExecutionProvider {
 		true
 	}
 
-	fn register(&self, session_builder: &SessionBuilder) -> Result<()> {
+	fn register(&self, session_builder: &mut SessionBuilder) -> Result<(), RegisterError> {
 		if self.use_arena {
-			status_to_result(ortsys![unsafe EnableCpuMemArena(session_builder.session_options_ptr.as_ptr())]).map_err(Error::ExecutionProvider)
+			ortsys![unsafe EnableCpuMemArena(session_builder.ptr_mut())?];
 		} else {
-			status_to_result(ortsys![unsafe DisableCpuMemArena(session_builder.session_options_ptr.as_ptr())]).map_err(Error::ExecutionProvider)
+			ortsys![unsafe DisableCpuMemArena(session_builder.ptr_mut())?];
 		}
+		Ok(())
 	}
 }

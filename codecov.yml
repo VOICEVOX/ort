@@ -1,2 +1,6 @@
 ignore:
   - "src/execution_providers"
+  - "src/tensor/types.rs"
+  - "ort-sys"
+  - "backends"
+comment: false

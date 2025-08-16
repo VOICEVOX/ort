@@ -1,55 +1,33 @@
-use std::os::raw::c_void;
+use alloc::string::ToString;
 
-use crate::{
-	error::{Error, Result},
-	execution_providers::{ExecutionProvider, ExecutionProviderDispatch},
-	session::SessionBuilder
-};
+use super::{ExecutionProvider, ExecutionProviderOptions, RegisterError};
+use crate::{error::Result, session::builder::SessionBuilder};
 
-#[derive(Debug, Clone)]
+/// [OpenVINO execution provider](https://onnxruntime.ai/docs/execution-providers/OpenVINO-ExecutionProvider.html) for
+/// Intel CPUs/GPUs/NPUs.
+#[derive(Default, Debug, Clone)]
 pub struct OpenVINOExecutionProvider {
-	device_type: Option<String>,
-	device_id: Option<String>,
-	num_threads: ort_sys::size_t,
-	cache_dir: Option<String>,
-	context: *mut c_void,
-	enable_opencl_throttling: bool,
-	enable_dynamic_shapes: bool,
-	enable_npu_fast_compile: bool
+	options: ExecutionProviderOptions
 }
 
-unsafe impl Send for OpenVINOExecutionProvider {}
-unsafe impl Sync for OpenVINOExecutionProvider {}
-
-impl Default for OpenVINOExecutionProvider {
-	fn default() -> Self {
-		Self {
-			device_type: None,
-			device_id: None,
-			num_threads: 8,
-			cache_dir: None,
-			context: std::ptr::null_mut(),
-			enable_opencl_throttling: false,
-			enable_dynamic_shapes: false,
-			enable_npu_fast_compile: false
-		}
-	}
-}
+super::impl_ep!(arbitrary; OpenVINOExecutionProvider);
 
 impl OpenVINOExecutionProvider {
-	/// Overrides the accelerator hardware type and precision with these values at runtime. If this option is not
-	/// explicitly set, default hardware and precision specified during build time is used.
+	/// Overrides the accelerator hardware type and precision.
+	///
+	/// `device_type` should be in the format `CPU`, `NPU`, `GPU`, `GPU.0`, `GPU.1`, etc. Heterogenous combinations are
+	/// also supported in the format `HETERO:NPU,GPU`.
+	///
+	/// ```
+	/// # use ort::{execution_providers::openvino::OpenVINOExecutionProvider, session::Session};
+	/// # fn main() -> ort::Result<()> {
+	/// let ep = OpenVINOExecutionProvider::default().with_device_type("GPU.0").build();
+	/// # Ok(())
+	/// # }
+	/// ```
 	#[must_use]
-	pub fn with_device_type(mut self, device_type: impl ToString) -> Self {
-		self.device_type = Some(device_type.to_string());
-		self
-	}
-
-	/// Selects a particular hardware device for inference. If this option is not explicitly set, an arbitrary free
-	/// device will be automatically selected by OpenVINO runtime.
-	#[must_use]
-	pub fn with_device_id(mut self, device_id: impl ToString) -> Self {
-		self.device_id = Some(device_id.to_string());
+	pub fn with_device_type(mut self, device_type: impl AsRef<str>) -> Self {
+		self.options.set("device_type", device_type.as_ref());
 		self
 	}
 
@@ -57,29 +35,27 @@ impl OpenVINOExecutionProvider {
 	/// explicitly set, default value of 8 is used during build time.
 	#[must_use]
 	pub fn with_num_threads(mut self, num_threads: usize) -> Self {
-		self.num_threads = num_threads as _;
+		self.options.set("num_of_threads", num_threads.to_string());
 		self
 	}
 
 	/// Explicitly specify the path to save and load the blobs, enabling model caching.
 	#[must_use]
-	pub fn with_cache_dir(mut self, dir: impl ToString) -> Self {
-		self.cache_dir = Some(dir.to_string());
-		self
-	}
-
-	/// This option is only alvailable when OpenVINO EP is built with OpenCL flags enabled. It takes in the remote
-	/// context i.e the `cl_context` address as a void pointer.
-	#[must_use]
-	pub fn with_opencl_context(mut self, context: *mut c_void) -> Self {
-		self.context = context;
+	pub fn with_cache_dir(mut self, dir: impl AsRef<str>) -> Self {
+		self.options.set("cache_dir", dir.as_ref());
 		self
 	}
 
 	/// This option enables OpenCL queue throttling for GPU devices (reduces CPU utilization when using GPU).
 	#[must_use]
-	pub fn with_opencl_throttling(mut self) -> Self {
-		self.enable_opencl_throttling = true;
+	pub fn with_opencl_throttling(mut self, enable: bool) -> Self {
+		self.options.set("enable_opencl_throttling", if enable { "true" } else { "false" });
+		self
+	}
+
+	#[must_use]
+	pub fn with_qdq_optimizer(mut self, enable: bool) -> Self {
+		self.options.set("enable_qdq_optimizer", if enable { "true" } else { "false" });
 		self
 	}
 
@@ -87,31 +63,26 @@ impl OpenVINOExecutionProvider {
 	/// input image/data shape at run time in CPU. This gives best result for running multiple inferences with varied
 	/// shaped images/data.
 	#[must_use]
-	pub fn with_dynamic_shapes(mut self) -> Self {
-		self.enable_dynamic_shapes = true;
+	pub fn with_dynamic_shapes(mut self, enable: bool) -> Self {
+		self.options.set("disable_dynamic_shapes", if enable { "false" } else { "true" });
 		self
 	}
 
 	#[must_use]
-	pub fn with_npu_fast_compile(mut self) -> Self {
-		self.enable_npu_fast_compile = true;
+	pub fn with_num_streams(mut self, num_streams: u8) -> Self {
+		self.options.set("num_streams", num_streams.to_string());
 		self
 	}
 
 	#[must_use]
-	pub fn build(self) -> ExecutionProviderDispatch {
-		self.into()
-	}
-}
-
-impl From<OpenVINOExecutionProvider> for ExecutionProviderDispatch {
-	fn from(value: OpenVINOExecutionProvider) -> Self {
-		ExecutionProviderDispatch::new(value)
+	pub fn with_precision(mut self, precision: impl AsRef<str>) -> Self {
+		self.options.set("precision", precision.as_ref());
+		self
 	}
 }
 
 impl ExecutionProvider for OpenVINOExecutionProvider {
-	fn as_str(&self) -> &'static str {
+	fn name(&self) -> &'static str {
 		"OpenVINOExecutionProvider"
 	}
 
@@ -120,34 +91,28 @@ impl ExecutionProvider for OpenVINOExecutionProvider {
 	}
 
 	#[allow(unused, unreachable_code)]
-	fn register(&self, session_builder: &SessionBuilder) -> Result<()> {
+	fn register(&self, session_builder: &mut SessionBuilder) -> Result<(), RegisterError> {
 		#[cfg(any(feature = "load-dynamic", feature = "openvino"))]
 		{
-			let openvino_options = ort_sys::OrtOpenVINOProviderOptions {
-				device_type: self
-					.device_type
-					.clone()
-					.map_or_else(std::ptr::null, |x| x.as_bytes().as_ptr().cast::<std::ffi::c_char>()),
-				device_id: self
-					.device_id
-					.clone()
-					.map_or_else(std::ptr::null, |x| x.as_bytes().as_ptr().cast::<std::ffi::c_char>()),
-				num_of_threads: self.num_threads,
-				cache_dir: self
-					.cache_dir
-					.clone()
-					.map_or_else(std::ptr::null, |x| x.as_bytes().as_ptr().cast::<std::ffi::c_char>()),
-				context: self.context,
-				enable_opencl_throttling: self.enable_opencl_throttling.into(),
-				enable_dynamic_shapes: self.enable_dynamic_shapes.into(),
-				enable_npu_fast_compile: self.enable_npu_fast_compile.into()
-			};
-			return crate::error::status_to_result(
-				crate::ortsys![unsafe SessionOptionsAppendExecutionProvider_OpenVINO(session_builder.session_options_ptr.as_ptr(), std::ptr::addr_of!(openvino_options))]
-			)
-			.map_err(Error::ExecutionProvider);
+			use alloc::ffi::CString;
+			use core::ffi::c_char;
+
+			use crate::{AsPointer, environment::get_environment, ortsys};
+
+			// Like TensorRT, the OpenVINO EP is also pretty picky about needing an environment by this point.
+			let _ = get_environment();
+
+			let ffi_options = self.options.to_ffi();
+			ortsys![unsafe SessionOptionsAppendExecutionProvider_OpenVINO_V2(
+				session_builder.ptr_mut(),
+				ffi_options.key_ptrs(),
+				ffi_options.value_ptrs(),
+				ffi_options.len()
+			)?];
+
+			return Ok(());
 		}
 
-		Err(Error::ExecutionProviderNotRegistered(self.as_str()))
+		Err(RegisterError::MissingFeature)
 	}
 }

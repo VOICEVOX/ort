@@ -1,0 +1,55 @@
+[package]
+name = "ort-tract"
+description = "ort + tract = 🦀 - An alternative backend for ort, powered by tract."
+version = "0.1.0+0.21"
+edition = "2021"
+rust-version = "1.70"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pykeio/ort"
+homepage = "https://ort.pyke.io/"
+keywords = [ "machine-learning", "ai", "ml" , "sys"]
+categories = [ "algorithms", "mathematics", "science" ]
+authors = [
+	"pyke.io <contact@pyke.io>"
+]
+
+[workspace]
+resolver = "2"
+members = [ "standalone" ]
+default-members = []
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+codegen-units = 1
+
+[lib]
+name = "ort_tract"
+path = "lib.rs"
+
+[features]
+
+[workspace.dependencies]
+ort-sys = { version = "=2.0.0-rc.10", path = "../../ort-sys", default-features = false }
+
+[dependencies]
+ort-sys = { workspace = true }
+tract-onnx = "0.21"
+parking_lot = "0.12"
+
+[dev-dependencies]
+ort = { version = "=2.0.0-rc.10", path = "../../", default-features = false, features = [ "alternative-backend", "fetch-models", "ndarray" ] }
+ureq = "2.1"
+image = "0.25"
+ndarray = "0.16"
+
+[[test]]
+name = "memory"
+path = "tests/memory.rs"
+[[test]]
+name = "tensor"
+path = "tests/tensor.rs"
+[[test]]
+name = "session"
+path = "tests/session.rs"

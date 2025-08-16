@@ -1,43 +1,35 @@
-use crate::{
-	error::{Error, Result},
-	execution_providers::{ExecutionProvider, ExecutionProviderDispatch},
-	session::SessionBuilder
-};
+use super::{ExecutionProvider, ExecutionProviderOptions, RegisterError};
+use crate::{error::Result, session::builder::SessionBuilder};
 
-#[cfg(all(not(feature = "load-dynamic"), feature = "onednn"))]
-extern "C" {
-	pub(crate) fn OrtSessionOptionsAppendExecutionProvider_Dnnl(
-		options: *mut ort_sys::OrtSessionOptions,
-		use_arena: std::os::raw::c_int
-	) -> ort_sys::OrtStatusPtr;
-}
-
+/// [oneDNN/DNNL execution provider](https://onnxruntime.ai/docs/execution-providers/oneDNN-ExecutionProvider.html) for
+/// Intel CPUs & iGPUs.
 #[derive(Debug, Default, Clone)]
+#[doc(alias = "DNNLExecutionProvider")]
 pub struct OneDNNExecutionProvider {
-	use_arena: bool
+	options: ExecutionProviderOptions
 }
+
+super::impl_ep!(arbitrary; OneDNNExecutionProvider);
 
 impl OneDNNExecutionProvider {
+	/// Enable/disable the usage of the arena allocator.
+	///
+	/// ```
+	/// # use ort::{execution_providers::onednn::OneDNNExecutionProvider, session::Session};
+	/// # fn main() -> ort::Result<()> {
+	/// let ep = OneDNNExecutionProvider::default().with_arena_allocator(true).build();
+	/// # Ok(())
+	/// # }
+	/// ```
 	#[must_use]
-	pub fn with_arena_allocator(mut self) -> Self {
-		self.use_arena = true;
+	pub fn with_arena_allocator(mut self, enable: bool) -> Self {
+		self.options.set("use_arena", if enable { "1" } else { "0" });
 		self
-	}
-
-	#[must_use]
-	pub fn build(self) -> ExecutionProviderDispatch {
-		self.into()
-	}
-}
-
-impl From<OneDNNExecutionProvider> for ExecutionProviderDispatch {
-	fn from(value: OneDNNExecutionProvider) -> Self {
-		ExecutionProviderDispatch::new(value)
 	}
 }
 
 impl ExecutionProvider for OneDNNExecutionProvider {
-	fn as_str(&self) -> &'static str {
+	fn name(&self) -> &'static str {
 		"DnnlExecutionProvider"
 	}
 
@@ -46,16 +38,31 @@ impl ExecutionProvider for OneDNNExecutionProvider {
 	}
 
 	#[allow(unused, unreachable_code)]
-	fn register(&self, session_builder: &SessionBuilder) -> Result<()> {
+	fn register(&self, session_builder: &mut SessionBuilder) -> Result<(), RegisterError> {
 		#[cfg(any(feature = "load-dynamic", feature = "onednn"))]
 		{
-			super::get_ep_register!(OrtSessionOptionsAppendExecutionProvider_Dnnl(options: *mut ort_sys::OrtSessionOptions, use_arena: std::os::raw::c_int) -> ort_sys::OrtStatusPtr);
-			return crate::error::status_to_result(unsafe {
-				OrtSessionOptionsAppendExecutionProvider_Dnnl(session_builder.session_options_ptr.as_ptr(), self.use_arena.into())
-			})
-			.map_err(Error::ExecutionProvider);
+			use core::ptr;
+
+			use crate::{AsPointer, ortsys, util};
+
+			let mut dnnl_options: *mut ort_sys::OrtDnnlProviderOptions = ptr::null_mut();
+			ortsys![unsafe CreateDnnlProviderOptions(&mut dnnl_options)?];
+			let _guard = util::run_on_drop(|| {
+				ortsys![unsafe ReleaseDnnlProviderOptions(dnnl_options)];
+			});
+
+			let ffi_options = self.options.to_ffi();
+			ortsys![unsafe UpdateDnnlProviderOptions(
+				dnnl_options,
+				ffi_options.key_ptrs(),
+				ffi_options.value_ptrs(),
+				ffi_options.len()
+			)?];
+
+			ortsys![unsafe SessionOptionsAppendExecutionProvider_Dnnl(session_builder.ptr_mut(), dnnl_options)?];
+			return Ok(());
 		}
 
-		Err(Error::ExecutionProviderNotRegistered(self.as_str()))
+		Err(RegisterError::MissingFeature)
 	}
 }

@@ -1,11 +1,5 @@
-#[cfg(feature = "ndarray")]
-use std::ptr;
-
-#[cfg(feature = "ndarray")]
-use crate::{
-	error::{Error, Result},
-	ortsys
-};
+use alloc::string::String;
+use core::fmt;
 
 /// Enum mapping ONNX Runtime's supported tensor data types.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -28,9 +22,7 @@ pub enum TensorElementType {
 	String,
 	/// Boolean, equivalent to Rust's `bool`.
 	Bool,
-	/// 16-bit floating point number, equivalent to [`half::f16`] (requires the `half` feature).
-	#[cfg(feature = "half")]
-	#[cfg_attr(docsrs, doc(cfg(feature = "half")))]
+	/// 16-bit floating point number, equivalent to [`half::f16`] (with the `half` feature).
 	Float16,
 	/// 64-bit floating point number, equivalent to Rust's `f64`. Also known as `double`.
 	Float64,
@@ -38,15 +30,79 @@ pub enum TensorElementType {
 	Uint32,
 	/// Unsigned 64-bit integer, equivalent to Rust's `u64`.
 	Uint64,
-	/// Brain 16-bit floating point number, equivalent to [`half::bf16`] (requires the `half` feature).
-	#[cfg(feature = "half")]
-	#[cfg_attr(docsrs, doc(cfg(feature = "half")))]
-	Bfloat16
+	/// Brain 16-bit floating point number, equivalent to [`half::bf16`] (with the `half` feature).
+	Bfloat16,
+	Complex64,
+	Complex128,
+	/// 8-bit floating point number with 4 exponent bits and 3 mantissa bits, with only NaN values and no infinite
+	/// values.
+	Float8E4M3FN,
+	/// 8-bit floating point number with 4 exponent bits and 3 mantissa bits, with only NaN values, no infinite
+	/// values, and no negative zero.
+	Float8E4M3FNUZ,
+	/// 8-bit floating point number with 5 exponent bits and 2 mantissa bits.
+	Float8E5M2,
+	/// 8-bit floating point number with 5 exponent bits and 2 mantissa bits, with only NaN values, no infinite
+	/// values, and no negative zero.
+	Float8E5M2FNUZ,
+	Undefined
+}
+
+impl TensorElementType {
+	/// Returns the size in bytes that a container of this type occupies according to its total capacity.
+	pub fn byte_size(&self, container_capacity: usize) -> usize {
+		match self {
+			TensorElementType::Bool | TensorElementType::Int8 | TensorElementType::Uint8 => container_capacity,
+			TensorElementType::Int16 | TensorElementType::Uint16 => container_capacity * 2,
+			TensorElementType::Int32 | TensorElementType::Uint32 => container_capacity * 4,
+			TensorElementType::Int64 | TensorElementType::Uint64 => container_capacity * 8,
+			TensorElementType::String => 0, // unsure what to do about this...
+			TensorElementType::Float8E4M3FN | TensorElementType::Float8E4M3FNUZ | TensorElementType::Float8E5M2 | TensorElementType::Float8E5M2FNUZ => {
+				container_capacity * 4
+			}
+			TensorElementType::Float16 | TensorElementType::Bfloat16 => container_capacity * 2,
+			TensorElementType::Float32 => container_capacity * 4,
+			TensorElementType::Float64 => container_capacity * 8,
+			TensorElementType::Complex64 => container_capacity * 8,
+			TensorElementType::Complex128 => container_capacity * 16,
+			TensorElementType::Undefined => 0
+		}
+	}
+}
+
+impl fmt::Display for TensorElementType {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.write_str(match self {
+			TensorElementType::Bool => "bool",
+			TensorElementType::Bfloat16 => "bf16",
+			TensorElementType::Float16 => "f16",
+			TensorElementType::Float32 => "f32",
+			TensorElementType::Float64 => "f64",
+			TensorElementType::Int16 => "i16",
+			TensorElementType::Int32 => "i32",
+			TensorElementType::Int64 => "i64",
+			TensorElementType::Int8 => "i8",
+			TensorElementType::String => "String",
+			TensorElementType::Uint16 => "u16",
+			TensorElementType::Uint32 => "u32",
+			TensorElementType::Uint64 => "u64",
+			TensorElementType::Uint8 => "u8",
+			TensorElementType::Complex64 => "c64",
+			TensorElementType::Complex128 => "c128",
+			// these really need more memorable (and easier to type) names. like Gerald or perhaps Alexa
+			TensorElementType::Float8E4M3FN => "f8_e4m3fn",
+			TensorElementType::Float8E4M3FNUZ => "f8_e4m3fnuz",
+			TensorElementType::Float8E5M2 => "f8_e5m2",
+			TensorElementType::Float8E5M2FNUZ => "f8_e5m2fnuz",
+			TensorElementType::Undefined => "undefined"
+		})
+	}
 }
 
 impl From<TensorElementType> for ort_sys::ONNXTensorElementDataType {
 	fn from(val: TensorElementType) -> Self {
 		match val {
+			TensorElementType::Undefined => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED,
 			TensorElementType::Float32 => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
 			TensorElementType::Uint8 => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8,
 			TensorElementType::Int8 => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8,
@@ -56,19 +112,24 @@ impl From<TensorElementType> for ort_sys::ONNXTensorElementDataType {
 			TensorElementType::Int64 => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64,
 			TensorElementType::String => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING,
 			TensorElementType::Bool => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL,
-			#[cfg(feature = "half")]
 			TensorElementType::Float16 => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16,
 			TensorElementType::Float64 => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE,
 			TensorElementType::Uint32 => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32,
 			TensorElementType::Uint64 => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64,
-			#[cfg(feature = "half")]
-			TensorElementType::Bfloat16 => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16
+			TensorElementType::Bfloat16 => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16,
+			TensorElementType::Complex64 => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX64,
+			TensorElementType::Complex128 => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX128,
+			TensorElementType::Float8E4M3FN => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E4M3FN,
+			TensorElementType::Float8E4M3FNUZ => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E4M3FNUZ,
+			TensorElementType::Float8E5M2 => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E5M2,
+			TensorElementType::Float8E5M2FNUZ => ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E5M2FNUZ
 		}
 	}
 }
 impl From<ort_sys::ONNXTensorElementDataType> for TensorElementType {
 	fn from(val: ort_sys::ONNXTensorElementDataType) -> Self {
 		match val {
+			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED => TensorElementType::Undefined,
 			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT => TensorElementType::Float32,
 			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8 => TensorElementType::Uint8,
 			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8 => TensorElementType::Int8,
@@ -78,14 +139,17 @@ impl From<ort_sys::ONNXTensorElementDataType> for TensorElementType {
 			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64 => TensorElementType::Int64,
 			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING => TensorElementType::String,
 			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL => TensorElementType::Bool,
-			#[cfg(feature = "half")]
 			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16 => TensorElementType::Float16,
 			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE => TensorElementType::Float64,
 			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32 => TensorElementType::Uint32,
 			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64 => TensorElementType::Uint64,
-			#[cfg(feature = "half")]
 			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16 => TensorElementType::Bfloat16,
-			_ => panic!("Invalid ONNXTensorElementDataType value")
+			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX64 => TensorElementType::Complex64,
+			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX128 => TensorElementType::Complex128,
+			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E4M3FN => TensorElementType::Float8E4M3FN,
+			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E4M3FNUZ => TensorElementType::Float8E4M3FNUZ,
+			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E5M2 => TensorElementType::Float8E5M2,
+			ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E5M2FNUZ => TensorElementType::Float8E5M2FNUZ
 		}
 	}
 }
@@ -95,11 +159,13 @@ pub trait IntoTensorElementType {
 	/// Returns the ONNX tensor element data type corresponding to the given Rust type.
 	fn into_tensor_element_type() -> TensorElementType;
 
-	crate::private_trait!();
+	private_trait!();
 }
 
+/// A superset of [`IntoTensorElementType`] that represents traits whose underlying memory is identical between Rust and
+/// C++ (i.e., every type except `String`).
 pub trait PrimitiveTensorElementType: IntoTensorElementType {
-	crate::private_trait!();
+	private_trait!();
 }
 
 macro_rules! impl_type_trait {
@@ -109,11 +175,11 @@ macro_rules! impl_type_trait {
 				TensorElementType::$variant
 			}
 
-			crate::private_impl!();
+			private_impl!();
 		}
 
 		impl PrimitiveTensorElementType for $type_ {
-			crate::private_impl!();
+			private_impl!();
 		}
 	};
 }
@@ -135,13 +201,19 @@ impl_type_trait!(u64, Uint64);
 #[cfg(feature = "half")]
 #[cfg_attr(docsrs, doc(cfg(feature = "half")))]
 impl_type_trait!(half::bf16, Bfloat16);
+#[cfg(feature = "num-complex")]
+#[cfg_attr(docsrs, doc(cfg(feature = "num-complex")))]
+impl_type_trait!(num_complex::Complex32, Complex64);
+#[cfg(feature = "num-complex")]
+#[cfg_attr(docsrs, doc(cfg(feature = "num-complex")))]
+impl_type_trait!(num_complex::Complex64, Complex128);
 
 impl IntoTensorElementType for String {
 	fn into_tensor_element_type() -> TensorElementType {
 		TensorElementType::String
 	}
 
-	crate::private_impl!();
+	private_impl!();
 }
 
 /// Adapter for common Rust string types to ONNX strings.
@@ -156,40 +228,8 @@ impl Utf8Data for String {
 	}
 }
 
-impl<'a> Utf8Data for &'a str {
+impl Utf8Data for &str {
 	fn as_utf8_bytes(&self) -> &[u8] {
 		self.as_bytes()
 	}
-}
-
-/// Construct an [`ndarray::ArrayView`] for an ORT tensor.
-///
-/// Only to be used on types whose Rust in-memory representation matches ONNX Runtime's (e.g. primitive numeric types
-/// like u32)
-#[cfg(feature = "ndarray")]
-pub(crate) fn extract_primitive_array<'t, T>(shape: ndarray::IxDyn, tensor: *mut ort_sys::OrtValue) -> Result<ndarray::ArrayViewD<'t, T>> {
-	// Get pointer to output tensor values
-	let mut output_array_ptr: *mut T = ptr::null_mut();
-	let output_array_ptr_ptr: *mut *mut T = &mut output_array_ptr;
-	let output_array_ptr_ptr_void: *mut *mut std::ffi::c_void = output_array_ptr_ptr.cast();
-	ortsys![unsafe GetTensorMutableData(tensor, output_array_ptr_ptr_void) -> Error::GetTensorMutableData; nonNull(output_array_ptr)];
-
-	let array_view = unsafe { ndarray::ArrayView::from_shape_ptr(shape, output_array_ptr) };
-	Ok(array_view)
-}
-
-/// Construct an [`ndarray::ArrayViewMut`] for an ORT tensor.
-///
-/// Only to be used on types whose Rust in-memory representation matches ONNX Runtime's (e.g. primitive numeric types
-/// like u32)
-#[cfg(feature = "ndarray")]
-pub(crate) fn extract_primitive_array_mut<'t, T>(shape: ndarray::IxDyn, tensor: *mut ort_sys::OrtValue) -> Result<ndarray::ArrayViewMutD<'t, T>> {
-	// Get pointer to output tensor values
-	let mut output_array_ptr: *mut T = ptr::null_mut();
-	let output_array_ptr_ptr: *mut *mut T = &mut output_array_ptr;
-	let output_array_ptr_ptr_void: *mut *mut std::ffi::c_void = output_array_ptr_ptr.cast();
-	ortsys![unsafe GetTensorMutableData(tensor, output_array_ptr_ptr_void) -> Error::GetTensorMutableData; nonNull(output_array_ptr)];
-
-	let array_view = unsafe { ndarray::ArrayViewMut::from_shape_ptr(shape, output_array_ptr) };
-	Ok(array_view)
 }
