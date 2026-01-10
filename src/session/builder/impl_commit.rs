@@ -248,15 +248,6 @@ impl SessionBuilder {
 		EditableSession::new(session_ptr, self)
 	}
 
-	#[cfg(feature = "__init-for-voicevox")]
-	pub fn commit_from_vv_bin(self, bin: &[u8]) -> Result<Session> {
-		if !crate::EnvHandle::get().expect("should be present").is_voicevox_onnxruntime {
-			return Err(Error::new("This ONNX Runtime does not support \"vv-bin\" format (note: load/link `voicevox_onnxruntime` instead of `onnxruntime`)"));
-		}
-		ortsys![unsafe AddSessionConfigEntry(self.session_options_ptr.as_ptr(), c"session.use_vv_bin".as_ptr(), c"1".as_ptr())];
-		self.commit_from_memory(bin)
-	}
-
 	pub fn edit_from_memory(self, model_bytes: &[u8]) -> Result<EditableSession> {
 		let mut session_ptr: *mut ort_sys::OrtSession = ptr::null_mut();
 
