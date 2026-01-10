@@ -157,7 +157,6 @@ thread_local! {
 #[cfg_attr(docsrs, doc(cfg(feature = "__init-for-voicevox")))]
 #[derive(Debug)]
 pub struct EnvHandle {
-	is_voicevox_onnxruntime: bool,
 	_env: std::sync::Arc<environment::Environment>,
 	api: AssertSendSync<NonNull<ort_sys::OrtApi>>,
 	#[cfg(feature = "load-dynamic")]
@@ -235,14 +234,7 @@ pub fn try_init_from(filename: &std::ffi::OsStr, tp_options: Option<environment:
 
 		let _env = create_env(api.0, tp_options)?;
 
-		let is_voicevox_onnxruntime = is_voicevox_onnxruntime(api.0);
-
-		Ok(EnvHandle {
-			is_voicevox_onnxruntime,
-			_env,
-			api,
-			dylib
-		})
+		Ok(EnvHandle { _env, api, dylib })
 	})
 }
 
@@ -267,9 +259,7 @@ pub fn try_init(tp_options: Option<environment::GlobalThreadPoolOptions>) -> any
 
 		let _env = create_env(api.0, tp_options)?;
 
-		let is_voicevox_onnxruntime = is_voicevox_onnxruntime(api.0);
-
-		Ok(EnvHandle { is_voicevox_onnxruntime, _env, api })
+		Ok(EnvHandle { _env, api })
 	})
 }
 
@@ -297,17 +287,6 @@ fn create_env(
 		fn drop(&mut self) {
 			G_ORT_API_FOR_ENV_BUILD.set(None);
 		}
-	}
-}
-
-#[cfg(feature = "__init-for-voicevox")]
-fn is_voicevox_onnxruntime(api: NonNull<ort_sys::OrtApi>) -> bool {
-	unsafe {
-		let build_info = (api.as_ref().GetBuildInfoString)();
-		CStr::from_ptr(build_info)
-			.to_str()
-			.expect("should be UTF-8")
-			.starts_with("VOICEVOX ORT Build Info: ")
 	}
 }
 
