@@ -58,8 +58,6 @@ use core::{
 };
 
 pub use ort_sys as sys;
-#[cfg(feature = "download-binaries")]
-pub use ort_sys::downloaded_version;
 
 #[cfg(feature = "load-dynamic")]
 pub use self::environment::init_from;
