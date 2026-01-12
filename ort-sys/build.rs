@@ -649,10 +649,6 @@ fn prepare_libort_dir() -> (PathBuf, bool) {
 				copy_libraries(&lib_dir.join("lib"), &out_dir);
 			}
 
-			const OUR_VERSION: &str = include_str!("./VERSION_NUMBER");
-			let their_version = std::fs::read_to_string(lib_dir.join("VERSION_NUMBER")).unwrap_or_else(|e| panic!("`VERSION_NUMBER`を読めませんでした: {e}"));
-			assert_eq!(OUR_VERSION.trim_end(), their_version.trim_end(), "`VERSION_NUMBER`が異なります");
-
 			(lib_dir, true)
 		}
 		#[cfg(not(feature = "download-binaries"))]
@@ -773,12 +769,6 @@ fn real_main(link: bool) {
 }
 
 fn main() {
-	if cfg!(feature = "download-binaries") {
-		let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-		let version = include_str!("./VERSION_NUMBER").trim_end();
-		std::fs::write(out_dir.join("downloaded_version.rs"), format!("#[macro_export] macro_rules! downloaded_version(() => ({version:?}));")).unwrap();
-	}
-
 	if env::var("DOCS_RS").is_ok() || cfg!(feature = "disable-linking") {
 		// On docs.rs, A) we don't need to link, and B) we don't have network, so we couldn't download anything if we wanted to.
 		// If `disable-linking` is specified, presumably the application will configure a custom backend, and the crate
