@@ -2,7 +2,7 @@
 
 #![allow(unused)]
 
-pub const PYKE_ROOT: &str = "voicevox_ort";
+pub const PYKE_ROOT: &str = "ort.pyke.io";
 
 #[cfg(all(target_os = "windows", target_arch = "x86"))]
 macro_rules! win32_extern {

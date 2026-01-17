@@ -403,9 +403,6 @@ impl EnvironmentBuilder {
 
 	/// Commit the environment configuration.
 	pub fn commit(self) -> Result<bool> {
-		if cfg!(feature = "__init-for-voicevox") {
-			panic!("`__init-for-voicevox`により禁止されています");
-		}
 		G_ENV.try_insert_with_fallible(|| self.commit_internal())
 	}
 }

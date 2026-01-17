@@ -9,12 +9,12 @@ const ONNXRUNTIME_VERSION: &str = "1.22.0";
 
 const ORT_ENV_SYSTEM_LIB_LOCATION: &str = "ORT_LIB_LOCATION";
 const ORT_ENV_SYSTEM_LIB_PROFILE: &str = "ORT_LIB_PROFILE";
-const ORT_ENV_IOS_ONNX_XCFWK_LOCATION: &str = "ORT_IOS_XCFWK_LOCATION";
-const ORT_ENV_IOS_ONNX_EXT_XCFWK_LOCATION: &str = "ORT_EXT_IOS_XCFWK_LOCATION";
 const ORT_ENV_PREFER_DYNAMIC_LINK: &str = "ORT_PREFER_DYNAMIC_LINK";
 const ORT_ENV_SKIP_DOWNLOAD: &str = "ORT_SKIP_DOWNLOAD";
 const ORT_ENV_CXX_STDLIB: &str = "ORT_CXX_STDLIB";
 const ENV_CXXSTDLIB: &str = "CXXSTDLIB"; // Used by the `cc` crate - we should mirror if this is set for other C++ crates
+#[cfg(feature = "download-binaries")]
+const ORT_EXTRACT_DIR: &str = "onnxruntime";
 
 #[cfg(feature = "download-binaries")]
 const DIST_TABLE: &str = include_str!("dist.txt");
@@ -30,7 +30,7 @@ fn fetch_file(source_url: &str) -> Vec<u8> {
 	let resp = ureq::Agent::new_with_config(
 		ureq::config::Config::builder()
 			.proxy(ureq::Proxy::try_from_env())
-			.max_redirects(1) // 我々VOICEVOXはGitHub Releaseを使う
+			.max_redirects(0)
 			.https_only(true)
 			.tls_config(
 				ureq::tls::TlsConfig::builder()
@@ -173,17 +173,6 @@ fn macos_rtlib_search_dir() -> Option<String> {
 	None
 }
 
-fn ios_rtlib_search_dir() -> Option<String> {
-	let output = Command::new("xcrun").args(&["clang", "--print-resource-dir"]).output().ok()?;
-
-	if !output.status.success() {
-		return None;
-	}
-
-	let resource_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
-	Some(format!("{}/lib/darwin", resource_dir))
-}
-
 fn static_link_prerequisites(using_pyke_libs: bool) {
 	let target_triple = env::var("TARGET").unwrap();
 
@@ -202,22 +191,11 @@ fn static_link_prerequisites(using_pyke_libs: bool) {
 		println!("cargo:rustc-link-lib={cpp_link_stdlib}");
 	}
 
-	if target_triple.contains("apple-darwin") {
+	if target_triple.contains("apple") {
 		println!("cargo:rustc-link-lib=framework=Foundation");
 		if let Some(dir) = macos_rtlib_search_dir() {
 			println!("cargo:rustc-link-search={dir}");
 			println!("cargo:rustc-link-lib=clang_rt.osx");
-		}
-	} else if target_triple.contains("apple-ios") {
-		println!("cargo:rustc-link-lib=framework=Foundation");
-		println!("cargo:rustc-link-lib=framework=CoreML");
-		if let Some(dir) = ios_rtlib_search_dir() {
-			println!("cargo:rustc-link-search={dir}");
-			if target_triple.contains("ios-sim") {
-				println!("cargo:rustc-link-lib=clang_rt.iossim");
-			} else {
-				println!("cargo:rustc-link-lib=clang_rt.ios");
-			}
 		}
 	}
 	if target_triple.contains("windows") && using_pyke_libs {
@@ -534,28 +512,6 @@ fn prepare_libort_dir() -> (PathBuf, bool) {
 	} else {
 		#[cfg(feature = "download-binaries")]
 		{
-			#[cfg(any(
-				feature = "tensorrt",
-				feature = "openvino",
-				feature = "onednn",
-				feature = "nnapi",
-				feature = "coreml",
-				feature = "xnnpack",
-				feature = "rocm",
-				feature = "acl",
-				feature = "armnn",
-				feature = "tvm",
-				feature = "migraphx",
-				feature = "rknpu",
-				feature = "vitis",
-				feature = "cann",
-				feature = "qnn",
-				feature = "webgpu",
-				feature = "azure",
-				feature = "nv"
-			))]
-			compile_error!("unsupported EP");
-
 			if env::var("CARGO_NET_OFFLINE").as_deref() == Ok("true") || skip_download() {
 				return (PathBuf::default(), true);
 			}
@@ -577,15 +533,6 @@ fn prepare_libort_dir() -> (PathBuf, bool) {
 			}
 
 			let feature_set = if !feature_set.is_empty() { feature_set.join(",") } else { "none".to_owned() };
-			let _ = feature_set; // 上記のものを無視する
-			let feature_set = if cfg!(feature = "directml") {
-				"directml"
-			} else if cfg!(feature = "cuda") {
-				"cu12+cudnn8" // ビルド環境に何がインストールされていようが、常にCUDA 12とcuDNN 8を使う
-			} else {
-				"none"
-			}
-			.to_owned();
 			println!("selected feature set: {feature_set}");
 
 			let mut dist = find_dist(&target, &feature_set);
@@ -611,8 +558,7 @@ fn prepare_libort_dir() -> (PathBuf, bool) {
 				.join(target)
 				.join(prebuilt_hash);
 
-			let ort_extract_dir = prebuilt_url.split('/').last().unwrap().strip_suffix(".tgz").unwrap();
-			let lib_dir = bin_extract_dir.join(ort_extract_dir);
+			let lib_dir = bin_extract_dir.join(ORT_EXTRACT_DIR);
 			if !lib_dir.exists() {
 				let downloaded_file = fetch_file(prebuilt_url);
 				assert!(verify_file(&downloaded_file, prebuilt_hash), "hash of downloaded ONNX Runtime binary does not match!");
@@ -659,48 +605,6 @@ fn prepare_libort_dir() -> (PathBuf, bool) {
 	}
 }
 
-fn link_ios_frameworks() -> bool {
-	let Ok(target) = env::var("TARGET") else {
-		return false;
-	};
-
-	// XCFramework for onnxruntime only has support for ios, ios-sim and macos.
-	let sub_dir = match &*target {
-		"aarch64-apple-ios" => "ios-arm64",
-		"aarch64-apple-ios-sim" => "ios-arm64_x86_64-simulator",
-		_ => return false
-	};
-
-	let Ok(xcfwk_dir) = env::var(ORT_ENV_IOS_ONNX_XCFWK_LOCATION) else {
-		return false;
-	};
-
-	let fwk_dir = Path::new(&xcfwk_dir).join(sub_dir);
-	println!("cargo:rustc-link-search=framework={}", fwk_dir.display());
-
-	if fwk_dir.join("onnxruntime.framework").exists() {
-		println!("cargo:rustc-link-lib=framework=onnxruntime");
-	} else {
-		// Framework not found, skip attempting extension framework
-		return false;
-	}
-
-	let Ok(ext_xcfwk_dir) = env::var(ORT_ENV_IOS_ONNX_EXT_XCFWK_LOCATION) else {
-		// If ext is not set, skip linking
-		return true;
-	};
-
-	let ext_fwk_dir = Path::new(&ext_xcfwk_dir).join(sub_dir);
-	println!("cargo:rustc-link-search=framework={}", ext_fwk_dir.display());
-
-	// Link extensions framework if found
-	if ext_fwk_dir.join("onnxruntime_extensions.framework").exists() {
-		println!("cargo:rustc-link-lib=framework=onnxruntime_extensions");
-	}
-
-	true
-}
-
 fn try_setup_with_pkg_config() -> bool {
 	match pkg_config::Config::new().probe("libonnxruntime") {
 		Ok(lib) => {
@@ -734,17 +638,10 @@ fn try_setup_with_pkg_config() -> bool {
 fn real_main(link: bool) {
 	println!("cargo:rerun-if-env-changed={}", ORT_ENV_SYSTEM_LIB_LOCATION);
 	println!("cargo:rerun-if-env-changed={}", ORT_ENV_SYSTEM_LIB_PROFILE);
-	println!("cargo:rerun-if-env-changed={}", ORT_ENV_IOS_ONNX_XCFWK_LOCATION);
-	println!("cargo:rerun-if-env-changed={}", ORT_ENV_IOS_ONNX_EXT_XCFWK_LOCATION);
 	println!("cargo:rerun-if-env-changed={}", ORT_ENV_PREFER_DYNAMIC_LINK);
 	println!("cargo:rerun-if-env-changed={}", ORT_ENV_SKIP_DOWNLOAD);
 	println!("cargo:rerun-if-env-changed={}", ORT_ENV_CXX_STDLIB);
 	println!("cargo:rerun-if-env-changed={}", ENV_CXXSTDLIB);
-
-	if link && link_ios_frameworks() {
-		static_link_prerequisites(false);
-		return;
-	}
 
 	let (install_dir, needs_link) = prepare_libort_dir();
 

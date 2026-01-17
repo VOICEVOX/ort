@@ -50,7 +50,7 @@ jobs:
   coverage:
     name: Code coverage
     runs-on: ubuntu-24.04
-    if: false # カバレッジはpykeio/ortに任せる
+    if: github.event.pull_request.draft == false
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -72,9 +72,4 @@ jobs:
         run: cargo install cargo-tarpaulin --version 0.31.1
       - name: Generate code coverage
         run: |
-          cargo tarpaulin -p ort --features fetch-models --verbose --timeout 120 --out xml --engine llvm --doc --lib --tests -- --test-threads 1
-      - name: Upload to codecov.io
-        uses: codecov/codecov-action@v4
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
+          cargo tarpaulin -p voicevox-ort --features fetch-models --verbose --timeout 120 --out xml --engine llvm --doc --lib --tests -- --test-threads 1

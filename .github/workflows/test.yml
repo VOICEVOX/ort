@@ -48,11 +48,8 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@v2.7.8
       - name: Run tests
-        shell: bash
         run: |
-          # ONNX Runtimeの静的リンクをやめているため、Windowsではdoctestを無効化する
-          [ "$RUNNER_OS" = Windows ] && targets=--tests || targets=
-          cargo test -p voicevox-ort --verbose --features fetch-models "$targets" -- --test-threads 1
+          cargo test -p voicevox-ort --verbose --features fetch-models -- --test-threads 1
         env:
           RUSTFLAGS: ${{ startsWith(matrix.platform.os, 'macos') && '-Clink-arg=-fapple-link-rtlib' || '' }}
           RUSTDOCFLAGS: ${{ startsWith(matrix.platform.os, 'macos') && '-Clink-arg=-fapple-link-rtlib' || '' }}
